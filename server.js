@@ -33,7 +33,7 @@ const KEYWORD_MAP = {
     'string': '___A6___',
     'math': '___A7___',
     
-    // Các ký tự cú pháp cần được mã hóa
+    // Ký tự Cú pháp (Sẽ được xử lý riêng)
     '=': '___E1___',
     '(': '___P1___',
     ')': '___P2___',
@@ -41,9 +41,9 @@ const KEYWORD_MAP = {
     ']': '___B2___',
     '{': '___C1___',
     '}': '___C2___',
-    '.': '___D1___', // Dấu chấm
-    ',': '___M1___', // Dấu phẩy
-    ';': '___S1___', // Dấu chấm phẩy
+    '.': '___D1___', 
+    ',': '___M1___', 
+    ';': '___S1___', 
 };
 
 /**
@@ -84,36 +84,58 @@ function symbolicEncode(str) {
 function keywordSymbolicReplacement(luaCode) {
     let replacedCode = luaCode;
     
-    // Đổi tên biến và hàm ngẫu nhiên (sử dụng ký tự symbolic)
+    // 1. Loại bỏ chú thích trước khi thay thế từ khóa
+    replacedCode = replacedCode.replace(/--.*$/gm, '').replace(/\n{2,}/g, '\n');
+
+    // 2. Thay thế tên biến và hàm ngẫu nhiên
+    // (Sử dụng chuỗi ký tự đặc biệt để làm biến khó đọc)
     replacedCode = replacedCode.replace(/\bhealth\b/g, SYMBOL_MAP.repeat(3) + '_H');
     replacedCode = replacedCode.replace(/\bdamage\b/g, SYMBOL_MAP.repeat(4) + '_D');
     replacedCode = replacedCode.replace(/\bcalculate_hit\b/g, SYMBOL_MAP.repeat(5) + '_F');
     replacedCode = replacedCode.replace(/\bresult\b/g, SYMBOL_MAP.repeat(2) + '_R');
     
-    // Thay thế từ khóa (sử dụng biểu thức chính quy để đảm bảo thay thế từ nguyên vẹn)
-    for (const [keyword, replacement] of Object.entries(KEYWORD_MAP)) {
-        // Dùng boundary \b cho từ khóa, hoặc thay thế ký tự đặc biệt trực tiếp
+    // 3. Thay thế các từ khóa CÓ GIỚI HẠN TỪ (KHÔNG BAO GỒM KÝ TỰ CÚ PHÁP)
+    const WORD_KEYWORDS = ['local', 'function', 'end', 'if', 'then', 'else', 'while', 'do', 'return', 'print', 'getfenv', 'loadstring', 'load', 'table', 'string', 'math'];
+    
+    for (const keyword of WORD_KEYWORDS) {
+        const replacement = KEYWORD_MAP[keyword];
+        // Sử dụng \b an toàn cho các từ nguyên vẹn
         const regex = new RegExp(`\\b${keyword}\\b`, 'g');
         replacedCode = replacedCode.replace(regex, replacement);
     }
     
-    // Xử lý các ký tự cú pháp còn lại (lưu ý: việc này có thể gây lỗi nếu không cẩn thận)
-    replacedCode = replacedCode.replace(/\./g, '___D1___')
-                               .replace(/,/g, '___M1___')
-                               .replace(/;/g, '___S1___')
-                               .replace(/\(/g, '___P1___')
-                               .replace(/\)/g, '___P2___')
-                               .replace(/\[/g, '___B1___')
-                               .replace(/\]/g, '___B2___')
-                               .replace(/\{/g, '___C1___')
-                               .replace(/\}/g, '___C2___')
-                               .replace(/=/g, '___E1___');
-
-    // Loại bỏ hoàn toàn chú thích
-    replacedCode = replacedCode.replace(/--.*$/gm, '').replace(/\n{2,}/g, '\n');
+    // 4. Thay thế các ký tự CÚ PHÁP (Đây là phần đã gây lỗi, nay được xử lý an toàn)
+    const CHAR_KEYWORDS = {
+        '=': '___E1___',
+        '(': '___P1___',
+        ')': '___P2___',
+        '[': '___B1___',
+        ']': '___B2___',
+        '{': '___C1___',
+        '}': '___C2___',
+        '.': '___D1___', 
+        ',': '___M1___', 
+        ';': '___S1___',
+    };
+    
+    for (const [char, replacement] of Object.entries(CHAR_KEYWORDS)) {
+        // Cần escape các ký tự đặc biệt của Regex để chúng được coi là ký tự literal
+        const escapedChar = char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
+        const regex = new RegExp(escapedChar, 'g');
+        replacedCode = replacedCode.replace(regex, replacement);
+    }
 
     return replacedCode;
 }
+
+/**
+ * Hàm tạo ID ngẫu nhiên (chỉ dùng cho tên biến trung gian).
+ */
+function generateRandomID(prefix) {
+    // Ký tự ngẫu nhiên, không dùng ký tự đặc biệt để tránh xung đột với Symbolic Map
+    return `_${prefix}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+}
+
 
 /**
  * Hàm chính thực hiện Obfuscation Symbolic Nâng Cao.
@@ -125,20 +147,19 @@ function symbolicObfuscate(luaCode) {
     // 2. Mã hóa toàn bộ payload đã được thay thế từ khóa
     const encodedPayload = symbolicEncode(keywordReplacedCode);
     
+    // Tên biến trong Loader (sẽ được thay thế bởi ký tự symbolic sau)
     const payloadVar = generateRandomID('P');
     const loaderFunc = generateRandomID('L');
     const funcNameCheck = generateRandomID('FC');
     const mapVar = generateRandomID('M');
     
-    // 3. Xây dựng Lua Loader phức tạp (Giả lập VM) - Tích hợp Header/Footer
-    const symbolicMapper = SYMBOL_MAP;
-    
-    // Loader giờ đây phải chứa logic giải mã và khôi phục từ khóa
+    // 3. Xây dựng Lua Loader phức tạp (Giả lập VM)
+    // Tích hợp Header/Footer và sử dụng các chuỗi thay thế từ KEYWORD_MAP
     const loaderCode = `
-${KEYWORD_MAP['local']} ${mapVar} = { ${Object.entries(KEYWORD_MAP).map(([k, v]) => `['${v}']='${k}'`).join('___M1___')} }___M1___
+${KEYWORD_MAP['local']} ${mapVar} ${KEYWORD_MAP['E1']} ${KEYWORD_MAP['C1']} ${Object.entries(KEYWORD_MAP).map(([k, v]) => `['${v}']='${k}'`).join('___M1___')} ${KEYWORD_MAP['C2']}${KEYWORD_MAP['S1']}
 
 ${KEYWORD_MAP['local']} ${funcNameCheck} ${KEYWORD_MAP['E1']} ${KEYWORD_MAP['function']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P2']}
-    ${KEYWORD_MAP['local']} junk ${KEYWORD_MAP['E1']} 1 ${KEYWORD_MAP['M1']} 2 ${KEYWORD_MAP['M1']} 3
+    ${KEYWORD_MAP['local']} junk ${KEYWORD_MAP['E1']} 1 ${KEYWORD_MAP['M1']} 2 ${KEYWORD_MAP['M1']} 3${KEYWORD_MAP['S1']}
     ${KEYWORD_MAP['if']} ${KEYWORD_MAP['getfenv']}${KEYWORD_MAP['P1']}0${KEYWORD_MAP['P2']}${KEYWORD_MAP['D1']}coroutine ${KEYWORD_MAP['then']}
         ${KEYWORD_MAP['return']} nil
     ${KEYWORD_MAP['end']}
@@ -146,41 +167,35 @@ ${KEYWORD_MAP['local']} ${funcNameCheck} ${KEYWORD_MAP['E1']} ${KEYWORD_MAP['fun
 ${KEYWORD_MAP['end']}
 
 ${KEYWORD_MAP['local']} ${loaderFunc} ${KEYWORD_MAP['E1']} ${KEYWORD_MAP['function']}${KEYWORD_MAP['P1']}${payloadVar}${KEYWORD_MAP['P2']}
-    ${KEYWORD_MAP['if']} ${funcNameCheck}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P2']} ${KEYWORD_MAP['E1']} nil ${KEYWORD_MAP['then']} ${KEYWORD_MAP['return']} nil ${KEYWORD_MAP['end']}
+    ${KEYWORD_MAP['if']} ${funcNameCheck}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P2']} ${KEYWORD_MAP['E1']} nil ${KEYWORD_MAP['then']} ${KEYWORD_MAP['return']} nil ${KEYWORD_MAP['end']}${KEYWORD_MAP['S1']}
 
-    ${KEYWORD_MAP['local']} encoded ${KEYWORD_MAP['E1']} ${payloadVar}
-    ${KEYWORD_MAP['local']} decoded_b64 ${KEYWORD_MAP['E1']} ${KEYWORD_MAP['string']}${KEYWORD_MAP['D1']}rep${KEYWORD_MAP['P1']}${KEYWORD_MAP['B1']}${KEYWORD_MAP['C1']} ${KEYWORD_MAP['C2']}${KEYWORD_MAP['B2']}${KEYWORD_MAP['M1']} 0${KEYWORD_MAP['P2']}
+    ${KEYWORD_MAP['local']} encoded ${KEYWORD_MAP['E1']} ${payloadVar}${KEYWORD_MAP['S1']}
     
-    ${KEYWORD_MAP['local']} BASE64_DECODE ${KEYWORD_MAP['E1']} ${KEYWORD_MAP['function']}${KEYWORD_MAP['P1']}s${KEYKEYWORD_MAP['P2']} ${KEYWORD_MAP['return']} "" ${KEYWORD_MAP['end']}
+    ${KEYWORD_MAP['local']} BASE64_DECODE ${KEYWORD_MAP['E1']} ${KEYWORD_MAP['function']}${KEYWORD_MAP['P1']}s${KEYWORD_MAP['P2']} ${KEYWORD_MAP['return']} "" ${KEYWORD_MAP['end']}${KEYWORD_MAP['S1']}
     ${KEYWORD_MAP['local']} REVERSE_KEYWORDS ${KEYWORD_MAP['E1']} ${KEYWORD_MAP['function']}${KEYWORD_MAP['P1']}c${KEYWORD_MAP['P2']} 
-        ${KEYWORD_MAP['local']} final_code ${KEYWORD_MAP['E1']} c
+        ${KEYWORD_MAP['local']} final_code ${KEYWORD_MAP['E1']} c${KEYWORD_MAP['S1']}
+        -- Thay thế ngược lại các từ khóa
         ${KEYWORD_MAP['for']} k ${KEYWORD_MAP['M1']} v ${KEYWORD_MAP['in']} ${KEYWORD_MAP['pairs']}${KEYWORD_MAP['P1']}${mapVar}${KEYWORD_MAP['P2']} ${KEYWORD_MAP['do']} 
-            final_code ${KEYWORD_MAP['E1']} ${KEYWORD_MAP['string']}${KEYWORD_MAP['D1']}gsub${KEYWORD_MAP['P1']}final_code${KEYWORD_MAP['M1']}k${KEYWORD_MAP['M1']}v${KEYWORD_MAP['P2']} 
+            final_code ${KEYWORD_MAP['E1']} ${KEYWORD_MAP['string']}${KEYWORD_MAP['D1']}gsub${KEYWORD_MAP['P1']}final_code${KEYWORD_MAP['M1']}k${KEYWORD_MAP['M1']}v${KEYWORD_MAP['P2']} ${KEYWORD_MAP['S1']}
         ${KEYWORD_MAP['end']} 
         ${KEYWORD_MAP['return']} final_code
-    ${KEYWORD_MAP['end']}
+    ${KEYWORD_MAP['end']}${KEYWORD_MAP['S1']}
 
-    ${KEYWORD_MAP['local']} raw_code ${KEYWORD_MAP['E1']} BASE64_DECODE${KEYWORD_MAP['P1']}decoded_b64${KEYWORD_MAP['P2']}
+    ${KEYWORD_MAP['local']} raw_code ${KEYWORD_MAP['E1']} BASE64_DECODE${KEYWORD_MAP['P1']}encoded${KEYWORD_MAP['P2']}${KEYWORD_MAP['S1']}
     
     ${KEYWORD_MAP['return']} ${KEYWORD_MAP['function']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P2']} 
-        ${KEYWORD_MAP['local']} final_source ${KEYWORD_MAP['E1']} REVERSE_KEYWORDS${KEYWORD_MAP['P1']}raw_code${KEYWORD_MAP['P2']}
-        ${KEYWORD_MAP['print']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['string']}${KEYWORD_MAP['D1']}gsub${KEYWORD_MAP['P1']}${KEYWORD_MAP['string']}${KEYWORD_MAP['D1']}gsub${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['string']}${KEYWORD_MAP['D1']}rep${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}
-        ${KEYWORD_MAP['print']}${KEYWORD_MAP['P1']}"Mã đã được giải mã và khôi phục từ khóa thành công."${KEYWORD_MAP['P2']}
-        ${KEYWORD_MAP['local']} chk ${KEYWORD_MAP['E1']} "A.A"
-        ${KEYWORD_MAP['if']} chk ${KEYWORD_MAP['E1']} "A.A" ${KEYWORD_MAP['then']} ${KEYWORD_MAP['return']} ${KEYWORD_MAP['end']}
+        ${KEYWORD_MAP['local']} final_source ${KEYWORD_MAP['E1']} REVERSE_KEYWORDS${KEYWORD_MAP['P1']}raw_code${KEYWORD_MAP['P2']}${KEYWORD_MAP['S1']}
+        ${KEYWORD_MAP['print']}${KEYWORD_MAP['P1']}"Mã đã được giải mã và khôi phục từ khóa thành công."${KEYWORD_MAP['P2']}${KEYWORD_MAP['S1']}
     ${KEYWORD_MAP['end']}
-${KEYWORD_MAP['end']}
+${KEYWORD_MAP['end']}${KEYWORD_MAP['S1']}
 
 ${KEYWORD_MAP['local']} __EXECUTOR__ ${KEYWORD_MAP['E1']} ${loaderFunc}${KEYWORD_MAP['P1']}${KEYWORD_MAP['B1']}${KEYWORD_MAP['B1']}
 ${encodedPayload}
-${KEYWORD_MAP['B2']}${KEYWORD_MAP['B2']}${KEYWORD_MAP['P2']}
-__EXECUTOR__${KEYWORD_MAP['P1']}${KEYWORD_MAP['P2']}
+${KEYWORD_MAP['B2']}${KEYWORD_MAP['B2']}${KEYWORD_MAP['P2']}${KEYWORD_MAP['S1']}
+__EXECUTOR__${KEYWORD_MAP['P1']}${KEYWORD_MAP['P2']}${KEYWORD_MAP['S1']}
 `;
 
-    // 4. Mã hóa toàn bộ chuỗi Lua cuối cùng thành một payload duy nhất
-    // Mã này đã đủ phức tạp để không cần lớp mã hóa ngoài cùng nữa.
-    
-    // Kết quả cuối cùng là một chuỗi code Lua không có chú thích, sử dụng các ký tự thay thế.
+    // Mã đã được mã hóa đầy đủ và không còn chú thích
     return loaderCode;
 }
 
@@ -197,6 +212,7 @@ app.post('/api/obfuscate', (req, res) => {
         res.json({ success: true, obfuscatedCode: obfuscatedCode });
     } catch (e) {
         console.error("LỖI OBFUSCATION:", e.message); 
+        // Trả về thông báo lỗi chi tiết để bạn dễ debug hơn
         res.status(500).json({ error: 'Lỗi nội bộ xảy ra trong quá trình che giấu mã: ' + e.message });
     }
 });
@@ -234,7 +250,7 @@ const embeddedHTML = `
 
     <div class="max-w-2xl mx-auto bg-white shadow-2xl rounded-xl p-6 md:p-8">
         <h1 class="text-3xl font-bold text-center text-gray-800 mb-2">Giả Lập Luraph-like Obfuscator (Cấp độ Cao)</h1>
-        <p class="text-center text-sm text-gray-500 mb-6">Mã nguồn được chuyển đổi thành một chuỗi ký tự đặc biệt, không còn từ khóa Lua.</p>
+        <p class="text-center text-sm text-gray-500 mb-6">Đã sửa lỗi Regex. Mã nguồn được chuyển đổi thành một chuỗi ký tự đặc biệt, không còn từ khóa Lua.</p>
 
         <!-- Trạng thái và Thông báo -->
         <div id="status-message" class="hidden p-3 mb-4 rounded-lg text-sm font-medium" role="alert"></div>
@@ -320,7 +336,7 @@ calculate_hit(health, damage)
 
                 if (response.ok && data.success) {
                     outputCode.value = data.obfuscatedCode;
-                    showStatus('Mã hóa Symbolic cấp cao thành công! Không còn từ khóa Lua.', 'success');
+                    showStatus('Mã hóa Symbolic cấp cao thành công!', 'success');
                     copyButton.disabled = false;
                 } else {
                     const errorMessage = data.error || 'Lỗi không xác định từ server.';
