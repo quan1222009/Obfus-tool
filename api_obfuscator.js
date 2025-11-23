@@ -1,11 +1,13 @@
 // Script Node.js: Obfuscator API Nâng Cao (Giống Luraph)
 const express = require('express');
 
+// Hàm require an toàn cho luaparse
 const luaparse = () => {
-    if (typeof require !== 'undefined') {
+    try {
         return require('luaparse');
+    } catch (e) {
+        return null;
     }
-    return null;
 };
 
 const app = express();
@@ -15,35 +17,37 @@ app.use(express.json());
 
 const luaparseLib = luaparse();
 if (!luaparseLib) {
-    console.error("Lỗi: Không tìm thấy thư viện luaparse.");
+    console.error("Lỗi: Không tìm thấy thư viện luaparse. Vui lòng chạy 'npm install luaparse'");
 }
 
 // Map để ánh xạ tên biến cũ sang tên biến mới
 const identifierMap = new Map();
 
-// Các chuỗi Lua/Roblox toàn cục KHÔNG ĐƯỢC ĐỔI TÊN
+// Các từ khóa Lua/Roblox KHÔNG ĐƯỢC ĐỔI TÊN
 const LUA_GLOBALS = new Set([
     'print', 'wait', 'game', 'script', 'workspace', 'math', 'string', 'table', 
     'require', 'local', 'function', 'end', 'if', 'then', 'else', 'for', 'in', 'while', 'do',
-    'and', 'or', 'not', 'return', 'true', 'false', 'nil', 'pairs', 'ipairs', 'next', 'tostring', 'tonumber'
+    'and', 'or', 'not', 'return', 'true', 'false', 'nil', 'pairs', 'ipairs', 'next', 
+    'tostring', 'tonumber', 'pcall', 'xpcall', 'select', 'unpack'
 ]);
 
 // =========================================================================
-//                             HÀM MÃ HÓA
+//                             HÀM MÃ HÓA (NODE.JS)
 // =========================================================================
 
+// Hàm mã hóa XOR và chuyển sang Base64 (Dùng Buffer chuẩn Node.js)
 const xorEncrypt = (text, key) => {
     if (!text) return "";
     
-    const keyBytes = new TextEncoder().encode(key);
-    const textBytes = new TextEncoder().encode(text);
-    const encryptedBytes = new Uint8Array(textBytes.length);
+    const keyBytes = Buffer.from(key, 'utf-8');
+    const textBytes = Buffer.from(text, 'utf-8');
+    const encryptedBytes = Buffer.alloc(textBytes.length);
 
     for (let i = 0; i < textBytes.length; i++) {
         encryptedBytes[i] = textBytes[i] ^ keyBytes[i % keyBytes.length];
     }
     
-    return Buffer.from(encryptedBytes).toString('base64');
+    return encryptedBytes.toString('base64');
 };
 
 const generateRandomIdentifier = () => {
@@ -51,7 +55,7 @@ const generateRandomIdentifier = () => {
 };
 
 // =========================================================================
-//                         LOGIC DUYỆT AST
+//                         LOGIC DUYỆT AST (ĐỔI TÊN)
 // =========================================================================
 
 let ENCRYPTION_KEY = ""; 
@@ -61,6 +65,7 @@ function traverseAndRename(node) {
 
     if (node.type === 'Identifier') {
         const oldName = node.name;
+        // Chỉ đổi tên nếu không phải từ khóa toàn cục
         if (!LUA_GLOBALS.has(oldName)) {
             if (!identifierMap.has(oldName)) {
                 identifierMap.set(oldName, generateRandomIdentifier());
@@ -96,7 +101,7 @@ local function _D(e_b64, k)
     for i = 1, #e do
         local enc_byte = string.byte(e, i)
         local key_byte = string.byte(k, (i - 1) % kl + 1)
-        -- Su dung toan tu bitwise XOR cua Luau
+        -- Ho tro ca Luau (~) va Lua 5.1 (bit32)
         local res_byte = bit32 and bit32.bxor(enc_byte, key_byte) or (enc_byte ~ key_byte)
         table.insert(r, string.char(res_byte))
     end
@@ -115,15 +120,15 @@ app.post('/obfuscate', (req, res) => {
         return res.status(400).json({ error: "Thiếu code Lua hợp lệ." });
     }
 
+    // Reset trạng thái
     identifierMap.clear();
     ENCRYPTION_KEY = generateRandomIdentifier().substring(0, 8); 
     let finalCode = luaCode; 
 
     try {
-        // 1. Thu thập String Literals bằng onCreateNode (Cách đúng của luaparse)
+        // BƯỚC 1: Thu thập tất cả chuỗi (String Literals)
         const stringsToEncrypt = [];
         
-        // Phân tích lần 1: Chỉ để lấy vị trí chuỗi
         luaparseLib.parse(luaCode, { 
             comments: false, 
             locations: true,
@@ -138,27 +143,28 @@ app.post('/obfuscate', (req, res) => {
             }
         });
 
-        // 2. Mã hóa chuỗi (Thay thế từ dưới lên để giữ đúng vị trí)
-        let obfuscatedWithStrings = luaCode;
-        
-        // Sắp xếp ngược để thay thế từ cuối file lên đầu
+        // BƯỚC 2: Mã hóa chuỗi và thay thế vào code gốc
+        // Sắp xếp ngược (từ cuối file lên đầu) để thay thế không làm lệch vị trí các chuỗi trước đó
         stringsToEncrypt.sort((a, b) => b.start - a.start);
 
+        let obfuscatedWithStrings = luaCode;
+
         stringsToEncrypt.forEach(str => {
-            // Bỏ qua nếu chuỗi rỗng
-            if (!str.value) return; 
+            // Bỏ qua chuỗi rỗng hoặc quá ngắn
+            if (!str.value || str.value.length === 0) return; 
 
             const encryptedB64 = xorEncrypt(str.value, ENCRYPTION_KEY);
             const callExpression = `_D("${encryptedB64}", "${ENCRYPTION_KEY}")`; 
             
+            // Cắt và ghép chuỗi an toàn
             const before = obfuscatedWithStrings.substring(0, str.start);
             const after = obfuscatedWithStrings.substring(str.end);
             
             obfuscatedWithStrings = before + callExpression + after;
         });
 
-        // 3. Đổi tên biến (Renaming)
-        // Phân tích lại code đã mã hóa chuỗi để lấy AST mới cho việc đổi tên
+        // BƯỚC 3: Đổi tên biến (Renaming)
+        // Phân tích lại đoạn code đã mã hóa chuỗi để lấy cấu trúc biến
         const astForRenaming = luaparseLib.parse(obfuscatedWithStrings, {
             comments: false,
             locations: false
@@ -166,15 +172,15 @@ app.post('/obfuscate', (req, res) => {
         
         traverseAndRename(astForRenaming);
 
-        // Áp dụng đổi tên bằng String Replacement
+        // Áp dụng đổi tên bằng String Replacement (Regex)
         finalCode = obfuscatedWithStrings;
         identifierMap.forEach((newName, oldName) => {
-            // Regex để thay thế toàn bộ từ (tránh thay thế chuỗi con)
+            // Chỉ thay thế "từ trọn vẹn" (whole word)
             const regex = new RegExp('\\b' + oldName + '\\b', 'g');
             finalCode = finalCode.replace(regex, newName);
         });
 
-        // 4. Ghép Header
+        // BƯỚC 4: Ghép Header giải mã
         const result = LUA_DECRYPTOR_HEADER + "\n" + finalCode;
 
         res.json({
@@ -185,7 +191,7 @@ app.post('/obfuscate', (req, res) => {
     } catch (error) {
         console.error("Lỗi Obfuscation:", error.message);
         res.status(400).json({ 
-            error: "Lỗi xử lý code. Vui lòng kiểm tra cú pháp Lua.",
+            error: "Lỗi xử lý code. Vui lòng kiểm tra cú pháp Lua đầu vào.",
             details: error.message 
         });
     }
