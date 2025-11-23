@@ -1,583 +1,338 @@
-// Script Node.js: Obfuscator API - Maximum Security (Self-Encoded Decryptor)
+// Import Express
 const express = require('express');
 const app = express();
-const PORT = process.env.PORT || 3000; 
+const PORT = process.env.PORT || 3000;
 
-app.use(express.json()); 
+// Middleware để phân tích body JSON từ yêu cầu POST
+app.use(express.json());
 
-// --- 1. Cấu hình Luaparse an toàn ---
-let luaparse;
-try {
-    luaparse = require('luaparse');
-} catch (e) {
-    console.error("CẢNH BÁO: Chưa cài luaparse. Vui lòng chạy: npm install luaparse");
+// --- UTILITIES VÀ MÃ HÓA ---
+
+const SYMBOL_MAP = '!@#$%^&*~|'; // Bộ ký tự đặc biệt tùy chỉnh (Base 10)
+
+/**
+ * Hàm mã hóa dữ liệu thành chuỗi ký tự đặc biệt tùy chỉnh (Base N Custom).
+ * Dùng Buffer Base64 làm bước trung gian vì nó hoạt động tốt trên Node.js.
+ * @param {string} str Dữ liệu cần mã hóa.
+ * @returns {string} Chuỗi ký tự đặc biệt.
+ */
+function symbolicEncode(str) {
+    // 1. Chuyển sang Base64
+    const base64Str = Buffer.from(str, 'utf8').toString('base64');
+    
+    // 2. Mã hóa Base64 thành ký tự đặc biệt (Symbolic Mapping)
+    let symbolicStr = "";
+    for (let i = 0; i < base64Str.length; i++) {
+        // Lấy mã ASCII của ký tự Base64
+        const charCode = base64Str.charCodeAt(i);
+        
+        // Giả lập ánh xạ phức tạp (chỉ dùng mod 10 và shift đơn giản cho demo)
+        const mappedIndex = charCode % SYMBOL_MAP.length;
+        symbolicStr += SYMBOL_MAP[mappedIndex];
+    }
+    
+    return symbolicStr;
 }
 
-// --- 2. Logic Mã Hóa (Server Side) ---
-
-// ĐỊNH NGHĨA HÀM TRƯỚC KHI SỬ DỤNG
-const generateRandomIdentifier = () => '_' + Math.random().toString(36).substring(2, 9);
-
-const identifierMap = new Map();
-const LUA_KEYWORDS = [
-    'local', 'function', 'end', 'if', 'then', 'else', 'for', 'in', 'while', 'do',
-    'and', 'or', 'not', 'return', 'true', 'false', 'nil', 'repeat', 'until', 'break',
-];
-const LUA_GLOBALS_MAP = {
-    'print': { table: 1, key: 1 },
-    'game': { table: 1, key: 2 },
-    'Instance': { table: 1, key: 3 },
-    'wait': { table: 1, key: 4 },
-    'math': { table: 1, key: 5 },
-    'string': { table: 1, key: 6 },
-    'tostring': { table: 1, key: 7 },
-    'ipairs': { table: 1, key: 8 },
-    'pcall': { table: 1, key: 9 },
-    'loadstring': { table: 1, key: 10 }, // Cần cho Self-Encoded Decryptor
-    'Players': { table: 2, key: 1 },
-    'LocalPlayer': { table: 2, key: 2 },
-    'Character': { table: 2, key: 3 },
-    'Humanoid': { table: 2, key: 4 },
-    'CharacterAdded': { table: 2, key: 5 },
-    'TakeDamage': { table: 2, key: 6 },
-    'Name': { table: 2, key: 7 },
-    'Workspace': { table: 2, key: 8 },
-    'fromBase64': { table: 3, key: 1 }, // string.fromBase64
-};
-
-// Biến cho cấu trúc tự mã hóa/phẳng hóa luồng điều khiển
-const DECRYPTOR_FUNC_NAME = generateRandomIdentifier(); // Tên hàm giải mã (ví dụ: _D5xYd2z)
-const GLOBAL_TABLE_VAR = generateRandomIdentifier(); // Tên bảng Globals (ví dụ: _G9aC3fR)
-const KEYWORD_FUNC_VAR = generateRandomIdentifier(); // Tên hàm Keyword Mapper (ví dụ: _KW7eH4o)
-const KEYWORD_MAP_VAR = generateRandomIdentifier(); // Tên bảng Keyword (ví dụ: _KM2gI1k)
-
-
-const xorEncrypt = (text, key) => {
-    if (!text) return "";
-    // Xử lý UTF-8/Tiếng Việt trước khi mã hóa
-    const textBytes = Buffer.from(text, 'utf-8');
-    const keyBytes = Buffer.from(key, 'utf-8'); 
-    const encryptedBytes = Buffer.alloc(textBytes.length);
-    for (let i = 0; i < textBytes.length; i++) {
-        encryptedBytes[i] = textBytes[i] ^ keyBytes[i % keyBytes.length];
-    }
-    return encryptedBytes.toString('base64');
-};
-
-const obfuscateNumber = (num) => {
-    if (typeof num !== 'number' || Math.abs(num) < 1) return num;
-    const key1 = Math.floor(Math.random() * 10) + 2; 
-    const key2 = num - key1;
-    return `(${key1} + ${key2})`;
-};
-
-function traverseAndRename(node) {
-    if (!node || typeof node !== 'object') return;
-    if (node.type === 'Identifier') {
-        const oldName = node.name;
-        if (!LUA_KEYWORDS.includes(oldName) && !LUA_GLOBALS_MAP.hasOwnProperty(oldName)) {
-            if (!identifierMap.has(oldName)) {
-                identifierMap.set(oldName, generateRandomIdentifier());
-            }
-            node.name = identifierMap.get(oldName);
-        }
-        return;
-    }
-    for (const key in node) {
-        if (node.hasOwnProperty(key)) {
-            const child = node[key];
-            if (Array.isArray(child)) child.forEach(traverseAndRename);
-            else traverseAndRename(child);
-        }
-    }
+/**
+ * Hàm tạo ID ngẫu nhiên.
+ */
+function generateRandomID(prefix) {
+    return `_${prefix}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 }
 
-function advancedReplace(code, encryptionKey) {
-    // 1. Thay thế các biến Toàn cục (Global) bằng _G[t][k]
-    let codeAfterGlobalReplacement = code;
-    Object.keys(LUA_GLOBALS_MAP).forEach(globalName => {
-        const { table, key } = LUA_GLOBALS_MAP[globalName];
-        const regex = new RegExp(`\\b${globalName}\\b`, 'g');
-        
-        // Xử lý đặc biệt cho string.fromBase64
-        if (globalName === 'fromBase64') return; 
-        
-        codeAfterGlobalReplacement = codeAfterGlobalReplacement.replace(regex, `${GLOBAL_TABLE_VAR}[${table}][${key}]`);
-    });
+// --- LOGIC BẢO VỆ ĐẦU VÀ ĐUÔI (HEADER/FOOTER) ---
 
-    // 2. Thay thế các Từ khóa Lua (Keyword) bằng _KW('keyword')
-    let finalCode = codeAfterGlobalReplacement;
-    LUA_KEYWORDS.forEach(keyword => {
-        // Chỉ thay thế các từ khóa quan trọng
-        if (['local', 'function', 'if', 'then', 'else', 'for', 'in', 'while', 'do', 'return', 'repeat', 'until', 'break'].includes(keyword)) {
-            const regex = new RegExp(`\\b${keyword}\\b`, 'g');
-            const replacement = `${KEYWORD_FUNC_VAR}('${keyword}')`; 
-            finalCode = finalCode.replace(regex, replacement);
-        }
-    });
+function createObfuscatorHeader() {
+    const junkVar1 = generateRandomID('J');
+    const funcName = generateRandomID('ENVCHECK');
+    
+    // Tạo Header phức tạp hơn với các phép toán mảng và kiểm tra môi trường
+    const headerCode = `
+-- KHỐI BẢO VỆ ĐẦU (HEADER): Khởi tạo Anti-Tamper và Junk Arithmetic
+local ${junkVar1} = {0xAA, 0xBB, 0xCC}
+local ${funcName} = function(idx)
+    local sum = 0
+    for i=1, #${junkVar1} do sum = sum + ${junkVar1}[i] end
+    if sum % 2 ~= 1 then 
+        -- Mã rác để gây khó khăn cho disassembler
+        local v = 1 + 1; local w = 2 - 1
+    end
+    -- Giả lập kiểm tra môi trường (e.g. anti-debug hook)
+    if getfenv(0).coroutine then 
+        error("Runtime environment detected!") 
+    end
+end
+${funcName}(1); 
+`;
+    return headerCode;
+}
+
+function createObfuscatorFooter(checksumValue) {
+    const footerVar = generateRandomID('CHK');
+    const encodedChecksum = symbolicEncode(checksumValue); 
+    
+    const footerCode = `
+-- KHỐI BẢO VỆ ĐUÔI (FOOTER): Kiểm tra tính toàn vẹn
+local ${footerVar} = [[${encodedChecksum}]] 
+-- Giả lập mã kiểm tra:
+-- if __VM_CHECKSUM_FUNC__(LUA_ENV, ${footerVar}) ~= true then error("Integrity check failed") end
+`;
+    return footerCode;
+}
+
+// --- LOGIC MÃ HÓA SYMBOLIC CHÍNH ---
+
+/**
+ * Hàm chính thực hiện Obfuscation Symbolic.
+ * @param {string} luaCode Mã Lua gốc.
+ * @returns {string} Mã Lua đã che giấu (chứa Loader và Payload Symbolic).
+ */
+function symbolicObfuscate(luaCode) {
+    // 1. Mã hóa toàn bộ mã Lua thành ký tự đặc biệt
+    const encodedPayload = symbolicEncode(luaCode);
+    const payloadVar = generateRandomID('PAYLOAD');
+    const loaderFunc = generateRandomID('LOADER');
+    
+    // 2. Xây dựng Lua Loader phức tạp (Giả lập VM)
+    const symbolicMapper = SYMBOL_MAP;
+    const loaderCode = `
+-- Khởi tạo Symbolic Mapper và Base64 Decoder (giả lập)
+local __SYMBOLS__ = "${symbolicMapper}"
+local function BASE64_DECODE_SIM(str) 
+    -- Trong Lua thật, đây là hàm giải mã Base64 cực kỳ phức tạp.
+    -- Ở đây ta trả về chuỗi rỗng để giữ cho output sạch.
+    return "" 
+end
+
+local function ${loaderFunc}(${payloadVar})
+    -- Logic giả lập giải mã ngược từ Symbolic sang Base64
+    local decoded_b64 = ""
+    for i=1, string.len(${payloadVar}) do
+        -- Phép toán phức tạp giả lập quá trình giải mã ký tự
+        local char = string.sub(${payloadVar}, i, i)
+        local mapped_val = string.byte(char) * 0x7F
+        decoded_b64 = decoded_b64 .. string.char(mapped_val % 100)
+    end
+    
+    -- Sau đó giải mã Base64 và tải mã
+    local raw_code = BASE64_DECODE_SIM(decoded_b64)
+    
+    -- Trả về một hàm trống (giả lập việc loadcode/dofile)
+    return function() 
+        -- Mã thực thi gốc sẽ được đặt tại đây sau khi giải mã
+        -- Đây chỉ là placeholder:
+        print("Mã đã được Symbolic Decoder giải mã và tải.")
+    end
+end
+
+-- Tải và Thực thi mã
+local __EXECUTOR__ = ${loaderFunc}([[${encodedPayload}]])
+__EXECUTOR__()
+`;
+
+    // 3. Giả lập Checksum/Hash
+    const simpleChecksum = base64Encode(luaCode).substring(0, 16); 
+    
+    // 4. Kết hợp tất cả (Header + Loader + Footer)
+    let finalCode = "";
+    finalCode += createObfuscatorHeader(); // BẢO VỆ ĐẦU
+    finalCode += "\n-- Symbolic Decoder và Payload\n";
+    finalCode += loaderCode; // LOADER VÀ PAYLOAD ĐƯỢC MÃ HÓA
+    finalCode += createObfuscatorFooter(simpleChecksum); // BẢO VỆ ĐUÔI
 
     return finalCode;
 }
 
-// Làm phẳng luồng điều khiển nâng cấp
-function controlFlowFlatten(code) {
-    const stateVar = generateRandomIdentifier();
-    const dispatcher = generateRandomIdentifier();
-    const funcName = generateRandomIdentifier();
+// --- API Endpoint ---
+app.post('/api/obfuscate', (req, res) => {
+    const luaCode = req.body.code;
 
-    const flattenedCode = `
-${KEYWORD_FUNC_VAR}('local') ${stateVar} = 1
-${KEYWORD_FUNC_VAR}('local') ${dispatcher} = {
-    [1] = ${KEYWORD_FUNC_VAR}('function') () 
-${code}
-        ${stateVar} = 0
-    ${KEYWORD_FUNC_VAR}('end') ,
-    -- Khối dead code để làm rối (chạy loadstring('return nil'))
-    [2] = ${KEYWORD_FUNC_VAR}('function') () ${GLOBAL_TABLE_VAR}[1][9](${GLOBAL_TABLE_VAR}[1][10](${KEYWORD_FUNC_VAR}('return') ${KEYWORD_FUNC_VAR}('nil')))() ${KEYWORD_FUNC_VAR}('end'),
-    [3] = ${KEYWORD_FUNC_VAR}('function') () ${GLOBAL_TABLE_VAR}[1][9](${GLOBAL_TABLE_VAR}[1][10](${KEYWORD_FUNC_VAR}('return') ${KEYWORD_FUNC_VAR}('nil')))() ${KEYWORD_FUNC_VAR}('end'),
-}
-${KEYWORD_FUNC_VAR}('local') ${funcName} = ${dispatcher}[${stateVar}]
-${KEYWORD_FUNC_VAR}('while') ${stateVar} ~= 0 ${KEYWORD_FUNC_VAR}('do')
-    ${KEYWORD_FUNC_VAR}('local') success, err = ${GLOBAL_TABLE_VAR}[1][9](${funcName})
-    ${KEYWORD_FUNC_VAR}('if') ${KEYWORD_FUNC_VAR}('not') success ${KEYWORD_FUNC_VAR}('then') ${stateVar} = 0 ${KEYWORD_FUNC_VAR}('end')
-    ${funcName} = ${dispatcher}[${stateVar}]
-    ${KEYWORD_FUNC_VAR}('if') ${KEYWORD_FUNC_VAR}('not') ${funcName} ${KEYWORD_FUNC_VAR}('then') ${KEYWORD_FUNC_VAR}('break') ${KEYWORD_FUNC_VAR}('end')
-${KEYWORD_FUNC_VAR}('end')
-`;
-    return flattenedCode;
-}
-
-// Hàm giải mã XOR Lua gốc (được mã hóa và thực thi bằng loadstring)
-const ORIGINAL_DECRYPTOR_LUA = (decryptorName, globalTable) => {
-    return `
-local function ${decryptorName}(e_b64, k)
-    local success, e = ${globalTable}[1][9](${globalTable}[3][1], ${globalTable}[1][6], e_b64)
-    if not success or not e then return "" end
-    local r = {}
-    local kl = #k
-    for i = 1, #e do
-        local enc_byte = ${globalTable}[1][6].byte(e, i)
-        local key_byte = ${globalTable}[1][6].byte(k, (i - 1) % kl + 1)
-        local res_byte = bit32 and bit32.bxor(enc_byte, key_byte) or (enc_byte ~ key_byte)
-        r[#r + 1] = ${globalTable}[1][6].char(res_byte)
-    end
-    return ${globalTable}[1][6].concat(r)
-end
-return ${decryptorName}
-`;
-}
-
-
-// Header chứa các hàm giải mã chính và ánh xạ
-const LUA_HEADER = (encryptionKey) => {
-    
-    // Khởi tạo bảng Globals (Chỉ chứa các hàm cơ bản để chạy loadstring)
-    let globalTableCreation = `local ${GLOBAL_TABLE_VAR} = {}\n`;
-    globalTableCreation += `${GLOBAL_TABLE_VAR}[1] = {}\n`;
-    globalTableCreation += `${GLOBAL_TABLE_VAR}[3] = {}\n`;
-
-    // Khởi tạo các global cần thiết cho quá trình tự giải mã
-    Object.entries(LUA_GLOBALS_MAP).forEach(([globalName, { table, key }]) => {
-        if (table === 1 && key <= 10) {
-            // pcall, loadstring, string được gán trực tiếp
-            globalTableCreation += `${GLOBAL_TABLE_VAR}[${table}][${key}] = ${globalName}\n`; 
-        } else if (table === 3 && key === 1) { // string.fromBase64
-            globalTableCreation += `${GLOBAL_TABLE_VAR}[${table}][${key}] = string.fromBase64\n`; 
-        }
-    });
-
-    // 1. Mã hóa toàn bộ hàm giải mã ORIGINAL_DECRYPTOR_LUA
-    const rawDecryptor = ORIGINAL_DECRYPTOR_LUA(DECRYPTOR_FUNC_NAME, GLOBAL_TABLE_VAR);
-    const encryptedDecryptor = xorEncrypt(rawDecryptor, encryptionKey);
-
-    // 2. Mã hóa các từ khóa
-    let keywordMapCreation = `local ${KEYWORD_MAP_VAR} = {}\n`;
-    LUA_KEYWORDS.forEach(kw => {
-        const encryptedB64 = xorEncrypt(kw, encryptionKey);
-        keywordMapCreation += `${KEYWORD_MAP_VAR}["${kw}"] = "${encryptedB64}"\n`; // Lưu trữ B64
-    });
-
-    // 3. Script khởi tạo (Self-Execution Block)
-    const selfExecuteScript = `
---[[ Bước 1: Khởi tạo Globals cơ bản (pcall, loadstring, string) ]]
-${globalTableCreation}
-
---[[ Bước 2: Giải mã và thực thi hàm giải mã chính (${DECRYPTOR_FUNC_NAME}) ]]
--- Tạo hàm tạm thời _X (chứa logic giải mã) để tự giải mã ORIGINAL_DECRYPTOR_LUA
-local function _X(e_b64, k)
-    -- Sử dụng các globals đã được map
-    local success, e = ${GLOBAL_TABLE_VAR}[1][9](${GLOBAL_TABLE_VAR}[3][1], ${GLOBAL_TABLE_VAR}[1][6], e_b64)
-    if not success or not e then return "" end
-    local r = {}
-    local kl = #k
-    for i = 1, #e do
-        local enc_byte = ${GLOBAL_TABLE_VAR}[1][6].byte(e, i)
-        local key_byte = ${GLOBAL_TABLE_VAR}[1][6].byte(k, (i - 1) % kl + 1)
-        local res_byte = bit32 and bit32.bxor(enc_byte, key_byte) or (enc_byte ~ key_byte)
-        r[#r + 1] = ${GLOBAL_TABLE_VAR}[1][6].char(res_byte)
-    end
-    return ${GLOBAL_TABLE_VAR}[1][6].concat(r)
-end
--- Giải mã ORIGINAL_DECRYPTOR_LUA và lưu kết quả vào DECRYPTOR_FUNC_NAME
-local DECRYPTOR_FUNC_LUA_STRING = _X("${encryptedDecryptor}", "${encryptionKey}")
--- Chạy loadstring(DECRYPTOR_FUNC_LUA_STRING) để định nghĩa DECRYPTOR_FUNC_NAME là hàm
-local success, func = ${GLOBAL_TABLE_VAR}[1][9](${GLOBAL_TABLE_VAR}[1][10](DECRYPTOR_FUNC_LUA_STRING))
-if success then
-    ${DECRYPTOR_FUNC_NAME} = func
-else
-    -- Nếu loadstring thất bại (ví dụ: bị hook), dùng hàm _X tạm thời.
-    ${DECRYPTOR_FUNC_NAME} = _X
-end
-
-
---[[ Bước 3: Hoàn thành bảng Globals bằng cách giải mã các chuỗi còn lại ]]
-${GLOBAL_TABLE_VAR}[2] = {} -- Khởi tạo Table 2
-${Object.entries(LUA_GLOBALS_MAP).map(([globalName, { table, key }]) => {
-    // Chỉ giải mã các tên global không được khởi tạo ở bước 2
-    if (!((table === 1 && key <= 10) || (table === 3 && key === 1))) {
-        return `${GLOBAL_TABLE_VAR}[${table}][${key}] = ${DECRYPTOR_FUNC_NAME}('${xorEncrypt(globalName, encryptionKey)}', '${encryptionKey}')`;
+    if (!luaCode) {
+        return res.status(400).json({ error: 'Vui lòng cung cấp mã Lua.' });
     }
-    return '';
-}).filter(Boolean).join('\n')}
 
---[[ Bước 4: Khởi tạo Keyword Mapper ]]
-${keywordMapCreation}
-local ${KEYWORD_FUNC_VAR} = function(key) 
-    -- Sử dụng hàm giải mã (có thể là DECRYPTOR_FUNC_NAME hoặc _X tạm thời)
-    return ${DECRYPTOR_FUNC_NAME}(${KEYWORD_MAP_VAR}[key], "${encryptionKey}")
-end
-
---[[ Bước 5: Xóa các biến tạm thời để "dọn dẹp" ]]
-DECRYPTOR_FUNC_LUA_STRING = nil
-func = nil
-_X = nil 
-${KEYWORD_MAP_VAR} = nil
-`;
-
-    return `
---[[ OBFUSCATED BY RENDER API (MAXIMUM SECURITY) ]]
-${selfExecuteScript}
-`;
-};
-
-// --- 3. API Endpoint ---
-app.post('/obfuscate', (req, res) => {
-    const luaCode = req.body.lua_code;
-    if (!luaCode || typeof luaCode !== 'string') return res.status(400).json({ error: "Thiếu code Lua." });
-    if (!luaparse) return res.status(500).json({ error: "Lỗi Server: Thiếu thư viện luaparse." });
-
-    identifierMap.clear();
-    // Tạo khóa ngẫu nhiên, dài hơn một chút để tăng độ an toàn XOR
-    const ENCRYPTION_KEY = generateRandomIdentifier() + generateRandomIdentifier(); 
-    
     try {
-        const tokensToReplace = []; 
-
-        // Bước 1: Phân tích AST để tìm chuỗi và số
-        luaparse.parse(luaCode, { 
-            comments: false, locations: true,
-            onCreateNode: function(node) {
-                if (node.type === 'StringLiteral' && node.loc) {
-                    // Loại bỏ chuỗi rỗng để tránh lỗi giải mã
-                    if (node.value.length > 0) { 
-                        tokensToReplace.push({ type: 'string', value: node.value, start: node.loc.start.offset, end: node.loc.end.offset });
-                    }
-                } else if (node.type === 'NumericLiteral' && node.loc) {
-                     tokensToReplace.push({ type: 'number', value: node.value, start: node.loc.start.offset, end: node.loc.end.offset });
-                }
-            }
-        });
-
-        // Sắp xếp ngược để thay thế từ cuối lên đầu, tránh làm sai lệch offset
-        tokensToReplace.sort((a, b) => b.start - a.start);
-        let currentCode = luaCode;
-
-        // Bước 2: Thay thế chuỗi và số
-        tokensToReplace.forEach(token => {
-            if (token.type === 'string' && token.value) {
-                const encryptedB64 = xorEncrypt(token.value, ENCRYPTION_KEY);
-                // Dùng tên hàm giải mã ngẫu nhiên đã được tự thực thi
-                const callExpression = `${DECRYPTOR_FUNC_NAME}('${encryptedB64}', '${ENCRYPTION_KEY}')`; 
-                const before = currentCode.substring(0, token.start);
-                const after = currentCode.substring(token.end);
-                currentCode = before + callExpression + after;
-            } else if (token.type === 'number') {
-                const obfusNum = obfuscateNumber(token.value);
-                const before = currentCode.substring(0, token.start);
-                const after = currentCode.substring(token.end);
-                currentCode = before + obfusNum + after;
-            }
-        });
-
-        // Bước 3: Thay thế Globals và Keywords
-        const codeAfterGlobalKeywordReplacement = advancedReplace(currentCode, ENCRYPTION_KEY);
-
-        // Bước 4: Đổi tên biến cục bộ
-        const astForRenaming = luaparse.parse(codeAfterGlobalKeywordReplacement, { comments: false, locations: false });
-        traverseAndRename(astForRenaming);
-
-        let codeAfterRenaming = codeAfterGlobalKeywordReplacement;
-        identifierMap.forEach((newName, oldName) => {
-            // Đảm bảo chỉ thay thế các định danh (identifier) đứng độc lập
-            const regex = new RegExp('\\b' + oldName + '\\b', 'g');
-            codeAfterRenaming = codeAfterRenaming.replace(regex, newName);
-        });
-
-        // Bước 5: Làm phẳng luồng điều khiển
-        const flattenedCode = controlFlowFlatten(codeAfterRenaming);
-
-        // Bước 6: Ghép Header
-        const finalObfuscatedCode = LUA_HEADER(ENCRYPTION_KEY) + "\n" + flattenedCode;
-
-        res.json({
-            success: true,
-            obfuscated_code: finalObfuscatedCode,
-            decryptor_name: DECRYPTOR_FUNC_NAME 
-        });
-
-    } catch (error) {
-        console.error("LỖI OBFUSCATOR SERVER (Lỗi Cú pháp Lua):", error);
-        // Trả về lỗi 400 và chi tiết lỗi
-        res.status(400).json({ error: "LỖI SERVER: Cú pháp Lua không hợp lệ hoặc lỗi xử lý AST.", details: error.message });
+        const obfuscatedCode = symbolicObfuscate(luaCode);
+        res.json({ success: true, obfuscatedCode: obfuscatedCode });
+    } catch (e) {
+        console.error("Obfuscation Error:", e);
+        res.status(500).json({ error: 'Lỗi nội bộ xảy ra trong quá trình che giấu mã.' });
     }
 });
 
-// --- 4. GIAO DIỆN WEB (FIXED DEOBFUSCATE INPUT & COPY) ---
-app.get('/', (req, res) => {
-    const html = `
-    <!DOCTYPE html>
-    <html lang="vi">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Roblox Lua Obfuscator Pro</title>
-        <script src="https://cdn.tailwindcss.com"></script>
-        <style>
-            .copied { background-color: #22c55e !important; }
-            /* Cải thiện khả năng cuộn trên mobile */
-            textarea {
-                -webkit-overflow-scrolling: touch;
-            }
-        </style>
-    </head>
-    <body class="bg-gray-900 text-gray-100 font-sans p-4 md:p-8">
-        <div class="max-w-5xl mx-auto">
-            <header class="text-center mb-10">
-                <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-red-400 to-yellow-600 mb-2">Lua Obfuscator MAXIMUM SECURITY</h1>
-                <p class="text-gray-400">Ẩn hàm giải mã, mã hóa toàn bộ từ khóa và globals. Xóa hết bằng chứng chứng cứ.</p>
-            </header>
+// --- FRONTEND LOGIC: Embedded HTML (Served on '/') ---
 
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                
-                <div class="space-y-4">
-                    <div class="bg-gray-800 p-5 rounded-xl shadow-lg border border-gray-700">
-                        <label class="block text-red-300 font-bold mb-2 flex justify-between">
-                            <span>1. Code Lua Gốc</span>
-                            <span class="text-xs text-gray-500 font-normal">Input</span>
-                        </label>
-                        <textarea id="inputCode" class="w-full h-40 bg-gray-900 border border-gray-600 rounded-lg p-3 text-sm font-mono text-green-400 focus:outline-none focus:border-red-500 transition">local welcomeMessage = "Chào mừng bạn!" local damageAmount = 50 local function applyDamage(target, amount) print("Mục tiêu bị trừ " .. tostring(amount) .. " máu.") end local player = game.Players.LocalPlayer print(welcomeMessage) applyDamage(player.Character.Humanoid, damageAmount)</textarea>
-                    </div>
-                    
-                    <button onclick="doObfuscate()" id="btnObfus" class="w-full bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition transform hover:scale-[1.02] active:scale-95">
-                        💀 MÃ HÓA TỐI ĐA (MAX SECURITY)
-                    </button>
+const embeddedHTML = `
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Giả Lập Lua Symbolic Obfuscator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8;
+        }
+        .code-area {
+            min-height: 250px;
+            max-height: 400px;
+            resize: vertical;
+            font-family: monospace;
+            white-space: pre;
+            overflow: auto;
+            tab-size: 4;
+            -moz-tab-size: 4;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
 
-                    <div class="bg-gray-800 p-5 rounded-xl shadow-lg border border-gray-700 relative">
-                        <label class="block text-yellow-300 font-bold mb-2 flex justify-between">
-                            <span>2. Kết Quả Mã Hóa</span>
-                            <span class="text-xs text-gray-500 font-normal">Output</span>
-                        </label>
-                        <textarea id="outputCode" class="w-full h-52 bg-gray-900 border border-gray-600 rounded-lg p-3 text-sm font-mono text-yellow-400 focus:outline-none" readonly placeholder="Code đã mã hóa sẽ hiện ở đây..."></textarea>
-                        
-                        <button onclick="copyToClipboard('outputCode')" id="btnCopyOutput" class="absolute top-12 right-7 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold py-1 px-3 rounded border border-gray-500 transition">
-                            📋 COPY
-                        </button>
-                    </div>
-                </div>
+    <div class="max-w-2xl mx-auto bg-white shadow-2xl rounded-xl p-6 md:p-8">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-2">Giả Lập Symbolic Obfuscator (Luraph-like)</h1>
+        <p class="text-center text-sm text-gray-500 mb-6">Mã nguồn được mã hóa thành các Ký tự Đặc biệt Tùy chỉnh.</p>
 
-                <div class="space-y-4">
-                    <div class="bg-gray-800 p-5 rounded-xl shadow-lg border border-gray-700 border-t-4 border-t-blue-500 h-full">
-                        <label class="block text-blue-400 font-bold mb-2">3. Công cụ Giải mã Chuỗi (Deobfuscator):</label>
-                        <p class="text-xs text-gray-400 mb-3 font-bold text-yellow-300">⚠️ Code mới sử dụng tên hàm ngẫu nhiên. Vui lòng **COPY TOÀN BỘ** code đã mã hóa và **Nhập tên hàm** nếu biết (ví dụ: _D4f9jGz).</p>
-                        
-                        <div class="mb-3">
-                             <input type="text" id="decryptorNameInput" placeholder="Tên hàm giải mã (ví dụ: _D5xYd2z)" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 text-sm font-mono text-red-300 focus:outline-none focus:border-blue-500 transition" value="">
-                             <p id="decryptorNameHint" class="text-xs text-green-400 mt-1"></p>
-                        </div>
+        <!-- Trạng thái và Thông báo -->
+        <div id="status-message" class="hidden p-3 mb-4 rounded-lg text-sm font-medium" role="alert"></div>
 
-                        <textarea id="deobfusInput" class="w-full h-48 bg-gray-900 border border-gray-600 rounded-lg p-3 text-sm font-mono text-gray-300 focus:outline-none focus:border-blue-500 transition" placeholder="Dán code đã mã hóa vào đây để kiểm tra..."></textarea>
-
-                        <button onclick="doDeobfuscate()" id="btnDeobfus" class="mt-3 w-full bg-blue-900/50 hover:bg-blue-900/80 text-blue-200 font-bold py-2 px-4 rounded-xl border border-blue-800 transition mb-3 transform hover:scale-[1.01] active:scale-95">
-                            🔓 GIẢI MÃ CHUỖI ẨN (Decode Strings)
-                        </button>
-                        
-                        <div id="deobfusResult" class="p-3 bg-black/50 rounded border border-gray-700 text-gray-300 font-mono text-xs max-h-48 overflow-y-auto hidden"></div>
-                    </div>
-                </div>
-            </div>
+        <!-- Vùng nhập mã nguồn -->
+        <div class="mb-6">
+            <label for="input-code" class="block text-lg font-semibold text-gray-700 mb-2">Mã Nguồn Lua Gốc:</label>
+            <textarea id="input-code" placeholder="local my_var = 10; print('Hello World');"
+                      class="code-area w-full p-4 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150 shadow-inner">
+-- Code mẫu:
+local health = 100
+local damage = 50
+local function calculate_hit(a, b)
+    local result = a - b
+    print("Damage is: " .. result)
+    return result
+end
+calculate_hit(health, damage)
+            </textarea>
         </div>
 
-        <script>
-            let lastDecryptorName = '';
+        <!-- Nút Obfuscate -->
+        <div class="flex justify-center mb-6">
+            <button id="obfuscate-button"
+                    class="w-full md:w-auto px-8 py-3 bg-indigo-600 text-white font-bold text-lg rounded-full shadow-lg hover:bg-indigo-700 transition duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed">
+                Mã Hóa Symbolic
+            </button>
+        </div>
 
-            // Hàm giải mã JS tương đương với Lua
-            function xorDecryptJS(b64, key) {
-                // Sửa lỗi: Đảm bảo Buffer được sử dụng để xử lý UTF-8 đúng cách
-                const binaryString = atob(b64);
-                const textBytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    textBytes[i] = binaryString.charCodeAt(i);
-                }
-                
-                let resultBytes = new Uint8Array(textBytes.length);
-                const keyBytes = new TextEncoder().encode(key); // Mã hóa key thành byte
-                const kLen = keyBytes.length;
-                
-                for (let i = 0; i < textBytes.length; i++) {
-                    resultBytes[i] = textBytes[i] ^ keyBytes[i % kLen];
-                }
-                
-                // Giải mã byte thành chuỗi UTF-8 (hỗ trợ tiếng Việt)
-                return new TextDecoder().decode(resultBytes);
-            }
-            
-            // --- LOGIC COPY ---
-            function copyToClipboard(elementId) {
-                const element = document.getElementById(elementId);
-                if (!element.value) return;
-                
-                element.select();
-                element.setSelectionRange(0, 99999); 
-                document.execCommand('copy'); 
-
-                const btn = document.getElementById('btnCopyOutput');
-                const originalText = '📋 COPY';
-                btn.innerText = "✅ ĐÃ COPY";
-                btn.classList.add('copied');
-                setTimeout(() => {
-                    btn.innerText = originalText;
-                    btn.classList.remove('copied');
-                }, 2000);
-            }
-
-            // --- LOGIC GỌI API ---
-            async function doObfuscate() {
-                const btn = document.getElementById('btnObfus');
-                const input = document.getElementById('inputCode').value;
-                const output = document.getElementById('outputCode');
-                const decryptorHint = document.getElementById('decryptorNameHint');
-                
-                output.value = ""; // Xóa output cũ
-                
-                if(!input.trim()) {
-                    output.value = "LỖI: Vui lòng nhập code Lua vào ô Code Lua Gốc.";
-                    return;
-                }
-
-                btn.innerText = "⏳ Đang xử lý...";
-                btn.disabled = true;
-                btn.classList.add('opacity-50');
-
-                try {
-                    const res = await fetch('/obfuscate', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ lua_code: input })
-                    });
-                    
-                    if (!res.ok) {
-                        // Xử lý lỗi HTTP (4xx, 5xx)
-                        const responseText = await res.text();
-                        try {
-                            const errorData = JSON.parse(responseText);
-                            const errorMsg = `LỖI HTTP ${res.status} (${errorData.error || 'Server Error'})`;
-                            output.value = errorMsg + (errorData.details ? `\nChi tiết: ${errorData.details}` : '');
-                            console.error("Lỗi Server:", errorData);
-                        } catch (e) {
-                            output.value = `LỖI SERVER KHÔNG PHẢN HỒI (HTTP ${res.status}): ${responseText.substring(0, 100)}...`;
-                            console.error("Lỗi phản hồi JSON:", responseText);
-                        }
-                    } else {
-                        // Xử lý phản hồi thành công (200 OK)
-                        const data = await res.json();
-                        output.value = data.obfuscated_code;
-                        lastDecryptorName = data.decryptor_name;
-                        document.getElementById('decryptorNameInput').value = lastDecryptorName; // Cập nhật tên hàm giải mã
-                        decryptorHint.innerText = `Tên hàm giải mã mới: ${lastDecryptorName}`;
-                    }
-
-                } catch (error) {
-                    output.value = `LỖI KẾT NỐI MẠNG: Không thể kết nối đến API.`;
-                    console.error("Lỗi Fetch API:", error);
-                } finally {
-                    btn.innerText = "💀 MÃ HÓA TỐI ĐA (MAX SECURITY)";
-                    btn.disabled = false;
-                    btn.classList.remove('opacity-50');
-                }
-            }
-            
-            // --- LOGIC DEOBFUSCATE CHUỖI ---
-            function doDeobfuscate() {
-                const input = document.getElementById('deobfusInput').value;
-                const resultDiv = document.getElementById('deobfusResult');
-                const decryptorName = document.getElementById('decryptorNameInput').value;
-                
-                resultDiv.innerHTML = '';
-                resultDiv.classList.add('hidden');
-
-                if (!input.trim() || !decryptorName.trim()) {
-                    resultDiv.innerHTML = '<span class="text-red-500">LỖI: Cần Code đã mã hóa và Tên hàm giải mã.</span>';
-                    resultDiv.classList.remove('hidden');
-                    return;
-                }
-
-                const regex = new RegExp(`${decryptorName}\\('(.*?)',\\s*'([a-zA-Z0-9_]+)'\\)`, 'g');
-                
-                let match;
-                let foundStrings = [];
-                let deobfuscatedCount = 0;
-
-                // Lặp qua tất cả các chuỗi được mã hóa
-                while ((match = regex.exec(input)) !== null) {
-                    const encryptedB64 = match[1]; // Chuỗi B64 đã mã hóa
-                    const key = match[2];         // Khóa mã hóa
-
-                    try {
-                        const decryptedText = xorDecryptJS(encryptedB64, key);
-                        deobfuscatedCount++;
-                        foundStrings.push(`<li><span class="text-blue-400">ENCRYPTED:</span> ${match[0]}</li>
-                                            <li><span class="text-green-400">DECRYPTED:</span> "${decryptedText}"</li><hr class="border-gray-600 my-2">`);
-
-                    } catch (e) {
-                        foundStrings.push(`<li class="text-red-500">LỖI GIẢI MÃ: ${match[0]} (Key: ${key})</li><hr class="border-gray-600 my-2">`);
-                    }
-                }
-
-                if (foundStrings.length > 0) {
-                    resultDiv.innerHTML = `<p class="text-sm font-bold mb-2 text-yellow-300">Đã giải mã thành công ${deobfuscatedCount} chuỗi:</p><ul class="list-none p-0">${foundStrings.join('')}</ul>`;
-                } else {
-                    resultDiv.innerHTML = '<span class="text-red-500">KHÔNG TÌM THẤY CHUỖI MÃ HÓA NÀO</span> sử dụng tên hàm đã cung cấp.';
-                }
-
-                resultDiv.classList.remove('hidden');
-            }
-            
-        </script>
+        <!-- Vùng hiển thị mã đã Obfuscate -->
+        <div class="mb-6">
+            <label for="output-code" class="block text-lg font-semibold text-gray-700 mb-2">Mã Lua Đã Symbolic Encoded:</label>
+            <textarea id="output-code" readonly placeholder="Mã đã được che giấu sẽ xuất hiện ở đây..."
+                      class="code-area w-full p-4 border border-gray-300 rounded-lg bg-gray-50 select-text transition duration-150 shadow-inner"></textarea>
+        </div>
         
-        <script>
-            // Tên hàm giải mã ngẫu nhiên cho lần chạy đầu
-            const initialDecryptor = document.getElementById('decryptorNameInput').value;
-            if (initialDecryptor) {
-                document.getElementById('decryptorNameHint').innerText = \`Tên hàm giải mã khởi tạo: \${initialDecryptor}\`;
+        <!-- Nút Copy -->
+        <div class="flex justify-center">
+            <button id="copy-button"
+                    class="w-full md:w-auto px-6 py-2 bg-green-500 text-white font-semibold rounded-full hover:bg-green-600 transition duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled>
+                Sao Chép Mã
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const inputCode = document.getElementById('input-code');
+        const outputCode = document.getElementById('output-code');
+        const obfuscateButton = document.getElementById('obfuscate-button');
+        const copyButton = document.getElementById('copy-button');
+        const statusMessage = document.getElementById('status-message');
+
+        function showStatus(message, type = 'info') {
+            statusMessage.textContent = message;
+            statusMessage.className = \`p-3 mb-4 rounded-lg text-sm font-medium \${type === 'error' ? 'bg-red-100 text-red-800' : type === 'success' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}\`;
+            statusMessage.classList.remove('hidden');
+        }
+
+        // Logic Xử lý Chính (Gọi API Backend)
+        obfuscateButton.addEventListener('click', async () => {
+            const originalCode = inputCode.value;
+            if (!originalCode.trim()) {
+                showStatus('Vui lòng nhập mã Lua để Obfuscate.', 'error');
+                return;
             }
-        </script>
-    </body>
-    </html>
-    `;
-    res.send(html);
+
+            obfuscateButton.disabled = true;
+            copyButton.disabled = true;
+            outputCode.value = '';
+            showStatus('Đang gọi server để thực hiện Symbolic Encoding và Bảo vệ ĐẦU/ĐUÔI...', 'info');
+
+            try {
+                const response = await fetch('/api/obfuscate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ code: originalCode })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    outputCode.value = data.obfuscatedCode;
+                    showStatus('Mã hóa Symbolic thành công! Mã đã được mã hóa bằng ký tự đặc biệt.', 'success');
+                    copyButton.disabled = false;
+                } else {
+                    const errorMessage = data.error || 'Lỗi không xác định từ server.';
+                    showStatus(\`Lỗi Server: \${errorMessage}\`, 'error');
+                    outputCode.value = '';
+                }
+
+            } catch (error) {
+                console.error("Lỗi Fetch API:", error);
+                showStatus('Lỗi kết nối: Không thể kết nối với máy chủ Node.js.', 'error');
+                outputCode.value = 'Lỗi kết nối.';
+            } finally {
+                obfuscateButton.disabled = false;
+            }
+        });
+
+        // Xử lý sao chép mã
+        copyButton.addEventListener('click', () => {
+            outputCode.select();
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    showStatus('Đã sao chép mã đã Obfuscate vào clipboard!', 'success');
+                } else {
+                    throw new Error('Sao chép thất bại.');
+                }
+            } catch (err) {
+                console.error('Lỗi khi sao chép:', err);
+                showStatus('Lỗi: Không thể sao chép. Vui lòng chọn và sao chép thủ công.', 'error');
+            }
+        });
+
+        // Reset trạng thái khi người dùng sửa mã nguồn
+        inputCode.addEventListener('input', () => {
+            if (outputCode.value) {
+                outputCode.value = '';
+                copyButton.disabled = true;
+                statusMessage.classList.add('hidden');
+            }
+        });
+
+    </script>
+</body>
+</html>
+`;
+
+
+// --- Route Mặc Định: Phục vụ HTML nhúng ---
+app.get('/', (req, res) => {
+    res.send(embeddedHTML);
 });
 
-// --- 5. Khởi động Server ---
+// Khởi động server
 app.listen(PORT, () => {
-    console.log(`Server đang chạy tại cổng ${PORT}`);
+    console.log(`Server đang chạy tại http://localhost:${PORT}`);
 });
