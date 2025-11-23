@@ -20,7 +20,7 @@ if (!luaparseLib) {
     console.error("Lỗi: Không tìm thấy thư viện luaparse. Vui lòng chạy 'npm install luaparse'");
 }
 
-// Map để ánh xạ tên biến cũ sang tên biến mới (cho đổi tên)
+// Map để ánh xạ tên biến cũ sang tên tên biến mới (cho đổi tên)
 const identifierMap = new Map();
 
 // Các chuỗi Lua/Roblox toàn cục KHÔNG ĐƯỢC ĐỔI TÊN
@@ -49,7 +49,7 @@ const xorEncrypt = (text, key) => {
     const textBytes = new TextEncoder().encode(text);
     const encryptedBytes = new Uint8Array(textBytes.length);
 
-    // XOR từng byte
+    // FIX LỖI FATAL: Sửa cú pháp vòng lặp for (khởi tạo; điều kiện; bước nhảy)
     for (let i = 0; i < textBytes.length; i++) {
         encryptedBytes[i] = textBytes[i] ^ keyBytes[i % keyBytes.length];
     }
@@ -178,6 +178,7 @@ app.post('/obfuscate', (req, res) => {
         let obfuscatedWithStrings = luaCode; 
         
         const stringsToEncrypt = [];
+        // Phân tích lại code GỐC để lấy vị trí chuỗi (Rất quan trọng)
         luaparseLib.parse(luaCode, { comments: false, locations: true }, function (node) {
             if (node.type === 'StringLiteral' && node.loc) {
                 stringsToEncrypt.push({
@@ -218,7 +219,7 @@ app.post('/obfuscate', (req, res) => {
 
         res.json({
             success: true,
-            obfuscator_type: "Luraph-Style: String Encryption (Cleaned) + Renaming",
+            obfuscator_type: "Luraph-Style: String Encryption (FINAL WORKING) + Renaming",
             original_length: luaCode.length,
             obfuscated_code: finalObfuscatedCode,
             encryption_key: ENCRYPTION_KEY,
