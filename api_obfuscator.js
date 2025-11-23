@@ -54,9 +54,9 @@ const KEYWORD_MAP_VAR = generateRandomIdentifier(); // Tên bảng Keyword (ví 
 
 const xorEncrypt = (text, key) => {
     if (!text) return "";
-    // Sửa lỗi: Đảm bảo keyBytes được tạo từ tham số 'key'
-    const keyBytes = Buffer.from(key, 'utf-8'); 
+    // Xử lý UTF-8/Tiếng Việt trước khi mã hóa
     const textBytes = Buffer.from(text, 'utf-8');
+    const keyBytes = Buffer.from(key, 'utf-8'); 
     const encryptedBytes = Buffer.alloc(textBytes.length);
     for (let i = 0; i < textBytes.length; i++) {
         encryptedBytes[i] = textBytes[i] ^ keyBytes[i % keyBytes.length];
@@ -124,7 +124,6 @@ function controlFlowFlatten(code) {
     const stateVar = generateRandomIdentifier();
     const dispatcher = generateRandomIdentifier();
     const funcName = generateRandomIdentifier();
-    // Đã xóa deadCodeBlock1 và deadCodeBlock2 vì chúng không được sử dụng
 
     const flattenedCode = `
 ${KEYWORD_FUNC_VAR}('local') ${stateVar} = 1
@@ -134,8 +133,8 @@ ${code}
         ${stateVar} = 0
     ${KEYWORD_FUNC_VAR}('end') ,
     -- Khối dead code để làm rối (chạy loadstring('return nil'))
-    [2] = ${KEYWORD_FUNC_VAR}('function') () ${GLOBAL_TABLE_VAR}[1][10](${KEYWORD_FUNC_VAR}('return') ${KEYWORD_FUNC_VAR}('nil'))() ${KEYWORD_FUNC_VAR}('end'),
-    [3] = ${KEYWORD_FUNC_VAR}('function') () ${GLOBAL_TABLE_VAR}[1][10](${KEYWORD_FUNC_VAR}('return') ${KEYWORD_FUNC_VAR}('nil'))() ${KEYWORD_FUNC_VAR}('end'),
+    [2] = ${KEYWORD_FUNC_VAR}('function') () ${GLOBAL_TABLE_VAR}[1][9](${GLOBAL_TABLE_VAR}[1][10](${KEYWORD_FUNC_VAR}('return') ${KEYWORD_FUNC_VAR}('nil')))() ${KEYWORD_FUNC_VAR}('end'),
+    [3] = ${KEYWORD_FUNC_VAR}('function') () ${GLOBAL_TABLE_VAR}[1][9](${GLOBAL_TABLE_VAR}[1][10](${KEYWORD_FUNC_VAR}('return') ${KEYWORD_FUNC_VAR}('nil')))() ${KEYWORD_FUNC_VAR}('end'),
 }
 ${KEYWORD_FUNC_VAR}('local') ${funcName} = ${dispatcher}[${stateVar}]
 ${KEYWORD_FUNC_VAR}('while') ${stateVar} ~= 0 ${KEYWORD_FUNC_VAR}('do')
@@ -222,17 +221,23 @@ local function _X(e_b64, k)
     return ${GLOBAL_TABLE_VAR}[1][6].concat(r)
 end
 -- Giải mã ORIGINAL_DECRYPTOR_LUA và lưu kết quả vào DECRYPTOR_FUNC_NAME
-local ${DECRYPTOR_FUNC_NAME} = _X("${encryptedDecryptor}", "${encryptionKey}")
--- Chạy loadstring(DECRYPTOR_FUNC_NAME) để định nghĩa DECRYPTOR_FUNC_NAME là hàm
-${GLOBAL_TABLE_VAR}[1][9](${GLOBAL_TABLE_VAR}[1][10](${DECRYPTOR_FUNC_NAME}))
+local DECRYPTOR_FUNC_LUA_STRING = _X("${encryptedDecryptor}", "${encryptionKey}")
+-- Chạy loadstring(DECRYPTOR_FUNC_LUA_STRING) để định nghĩa DECRYPTOR_FUNC_NAME là hàm
+local success, func = ${GLOBAL_TABLE_VAR}[1][9](${GLOBAL_TABLE_VAR}[1][10](DECRYPTOR_FUNC_LUA_STRING))
+if success then
+    ${DECRYPTOR_FUNC_NAME} = func
+else
+    -- Nếu loadstring thất bại (ví dụ: bị hook), dùng hàm _X tạm thời.
+    ${DECRYPTOR_FUNC_NAME} = _X
+end
+
 
 --[[ Bước 3: Hoàn thành bảng Globals bằng cách giải mã các chuỗi còn lại ]]
 ${GLOBAL_TABLE_VAR}[2] = {} -- Khởi tạo Table 2
 ${Object.entries(LUA_GLOBALS_MAP).map(([globalName, { table, key }]) => {
-    if (table === 1 && key > 10) { // Các Globals không cơ bản ở Table 1
-        return `${GLOBAL_TABLE_VAR}[${table}][${key}] = _X('${xorEncrypt(globalName, encryptionKey)}', '${encryptionKey}')`;
-    } else if (table === 2) { // Các Globals ở Table 2
-        return `${GLOBAL_TABLE_VAR}[${table}][${key}] = _X('${xorEncrypt(globalName, encryptionKey)}', '${encryptionKey}')`;
+    // Chỉ giải mã các tên global không được khởi tạo ở bước 2
+    if (!((table === 1 && key <= 10) || (table === 3 && key === 1))) {
+        return `${GLOBAL_TABLE_VAR}[${table}][${key}] = ${DECRYPTOR_FUNC_NAME}('${xorEncrypt(globalName, encryptionKey)}', '${encryptionKey}')`;
     }
     return '';
 }).filter(Boolean).join('\n')}
@@ -240,12 +245,14 @@ ${Object.entries(LUA_GLOBALS_MAP).map(([globalName, { table, key }]) => {
 --[[ Bước 4: Khởi tạo Keyword Mapper ]]
 ${keywordMapCreation}
 local ${KEYWORD_FUNC_VAR} = function(key) 
-    -- Sử dụng hàm _X (vẫn còn) để giải mã chuỗi từ khóa
-    return _X(${KEYWORD_MAP_VAR}[key], "${encryptionKey}")
+    -- Sử dụng hàm giải mã (có thể là DECRYPTOR_FUNC_NAME hoặc _X tạm thời)
+    return ${DECRYPTOR_FUNC_NAME}(${KEYWORD_MAP_VAR}[key], "${encryptionKey}")
 end
 
 --[[ Bước 5: Xóa các biến tạm thời để "dọn dẹp" ]]
-_X = nil
+DECRYPTOR_FUNC_LUA_STRING = nil
+func = nil
+_X = nil 
 ${KEYWORD_MAP_VAR} = nil
 `;
 
@@ -262,25 +269,32 @@ app.post('/obfuscate', (req, res) => {
     if (!luaparse) return res.status(500).json({ error: "Lỗi Server: Thiếu thư viện luaparse." });
 
     identifierMap.clear();
-    const ENCRYPTION_KEY = generateRandomIdentifier().substring(0, 8); 
+    // Tạo khóa ngẫu nhiên, dài hơn một chút để tăng độ an toàn XOR
+    const ENCRYPTION_KEY = generateRandomIdentifier() + generateRandomIdentifier(); 
     
     try {
         const tokensToReplace = []; 
 
+        // Bước 1: Phân tích AST để tìm chuỗi và số
         luaparse.parse(luaCode, { 
             comments: false, locations: true,
             onCreateNode: function(node) {
                 if (node.type === 'StringLiteral' && node.loc) {
-                    tokensToReplace.push({ type: 'string', value: node.value, start: node.loc.start.offset, end: node.loc.end.offset });
+                    // Loại bỏ chuỗi rỗng để tránh lỗi giải mã
+                    if (node.value.length > 0) { 
+                        tokensToReplace.push({ type: 'string', value: node.value, start: node.loc.start.offset, end: node.loc.end.offset });
+                    }
                 } else if (node.type === 'NumericLiteral' && node.loc) {
                      tokensToReplace.push({ type: 'number', value: node.value, start: node.loc.start.offset, end: node.loc.end.offset });
                 }
             }
         });
 
+        // Sắp xếp ngược để thay thế từ cuối lên đầu, tránh làm sai lệch offset
         tokensToReplace.sort((a, b) => b.start - a.start);
         let currentCode = luaCode;
 
+        // Bước 2: Thay thế chuỗi và số
         tokensToReplace.forEach(token => {
             if (token.type === 'string' && token.value) {
                 const encryptedB64 = xorEncrypt(token.value, ENCRYPTION_KEY);
@@ -297,26 +311,34 @@ app.post('/obfuscate', (req, res) => {
             }
         });
 
+        // Bước 3: Thay thế Globals và Keywords
         const codeAfterGlobalKeywordReplacement = advancedReplace(currentCode, ENCRYPTION_KEY);
 
+        // Bước 4: Đổi tên biến cục bộ
         const astForRenaming = luaparse.parse(codeAfterGlobalKeywordReplacement, { comments: false, locations: false });
         traverseAndRename(astForRenaming);
 
         let codeAfterRenaming = codeAfterGlobalKeywordReplacement;
         identifierMap.forEach((newName, oldName) => {
+            // Đảm bảo chỉ thay thế các định danh (identifier) đứng độc lập
             const regex = new RegExp('\\b' + oldName + '\\b', 'g');
             codeAfterRenaming = codeAfterRenaming.replace(regex, newName);
         });
 
+        // Bước 5: Làm phẳng luồng điều khiển
         const flattenedCode = controlFlowFlatten(codeAfterRenaming);
+
+        // Bước 6: Ghép Header
+        const finalObfuscatedCode = LUA_HEADER(ENCRYPTION_KEY) + "\n" + flattenedCode;
 
         res.json({
             success: true,
-            obfuscated_code: LUA_HEADER(ENCRYPTION_KEY) + "\n" + flattenedCode,
-            decryptor_name: DECRYPTOR_FUNC_NAME // Truyền tên hàm giải mã cho client
+            obfuscated_code: finalObfuscatedCode,
+            decryptor_name: DECRYPTOR_FUNC_NAME 
         });
 
     } catch (error) {
+        console.error("LỖI OBFUSCATOR SERVER:", error);
         res.status(400).json({ error: "Lỗi cú pháp Lua.", details: error.message });
     }
 });
@@ -333,6 +355,10 @@ app.get('/', (req, res) => {
         <script src="https://cdn.tailwindcss.com"></script>
         <style>
             .copied { background-color: #22c55e !important; }
+            /* Cải thiện khả năng cuộn trên mobile */
+            textarea {
+                -webkit-overflow-scrolling: touch;
+            }
         </style>
     </head>
     <body class="bg-gray-900 text-gray-100 font-sans p-4 md:p-8">
@@ -400,6 +426,27 @@ app.get('/', (req, res) => {
         <script>
             let lastDecryptorName = '';
 
+            // Hàm giải mã JS tương đương với Lua
+            function xorDecryptJS(b64, key) {
+                // Sửa lỗi: Đảm bảo Buffer được sử dụng để xử lý UTF-8 đúng cách
+                const binaryString = atob(b64);
+                const textBytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    textBytes[i] = binaryString.charCodeAt(i);
+                }
+                
+                let resultBytes = new Uint8Array(textBytes.length);
+                const keyBytes = new TextEncoder().encode(key); // Mã hóa key thành byte
+                const kLen = keyBytes.length;
+                
+                for (let i = 0; i < textBytes.length; i++) {
+                    resultBytes[i] = textBytes[i] ^ keyBytes[i % kLen];
+                }
+                
+                // Giải mã byte thành chuỗi UTF-8 (hỗ trợ tiếng Việt)
+                return new TextDecoder().decode(resultBytes);
+            }
+            
             // --- LOGIC COPY ---
             function copyToClipboard(elementId) {
                 const element = document.getElementById(elementId);
@@ -426,9 +473,10 @@ app.get('/', (req, res) => {
                 const output = document.getElementById('outputCode');
                 const decryptorHint = document.getElementById('decryptorNameHint');
                 
+                output.value = ""; // Xóa output cũ
+
                 if(!input.trim()) {
-                    // Use custom modal or message box instead of alert()
-                    output.value = "LỖI: Vui lòng nhập code!";
+                    output.value = "LỖI: Vui lòng nhập code Lua vào ô Code Lua Gốc.";
                     return;
                 }
 
@@ -442,6 +490,16 @@ app.get('/', (req, res) => {
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({ lua_code: input })
                     });
+                    
+                    if (!res.ok) {
+                        // Xử lý lỗi HTTP (ví dụ: 400, 500)
+                        const errorData = await res.json().catch(() => ({ error: 'Không thể đọc lỗi từ server.' }));
+                        const errorMsg = \`LỖI HTTP \${res.status}: \${errorData.error || 'Server Internal Error'}\`;
+                        output.value = errorMsg + (errorData.details ? \`\\nChi tiết: \${errorData.details}\` : '');
+                        console.error("LỖI OBFUSCATOR SERVER TRẢ VỀ:", errorData);
+                        return;
+                    }
+                    
                     const data = await res.json();
                     
                     if(data.success) {
@@ -455,10 +513,13 @@ app.get('/', (req, res) => {
                         document.getElementById('deobfusInput').value = data.obfuscated_code;
                         document.getElementById('deobfusResult').classList.add('hidden');
                     } else {
-                        output.value = "LỖI: " + (data.error || data.details || "Không rõ");
+                        // Lỗi logic trả về 200 nhưng success: false
+                        output.value = "LỖI LOGIC: " + (data.error || data.details || "Không rõ");
                     }
                 } catch(e) {
-                    output.value = "Lỗi kết nối server: " + e.message;
+                    // Lỗi kết nối (Network Error)
+                    output.value = "LỖI KẾT NỐI: Không thể gửi yêu cầu đến Server. Vui lòng kiểm tra Console (F12).";
+                    console.error("LỖI KẾT NỐI:", e);
                 }
                 btn.innerText = "💀 MÃ HÓA TỐI ĐA (MAX SECURITY)";
                 btn.disabled = false;
@@ -484,7 +545,7 @@ app.get('/', (req, res) => {
                 let match;
                 let foundCount = 0;
                 let decodedStrings = [];
-                const keywordList = ['local', 'function', 'end', 'if', 'then', 'else', 'for', 'in', 'while', 'do', 'and', 'or', 'not', 'return', 'true', 'false', 'nil', 'repeat', 'until', 'print', 'game', 'Instance', 'wait', 'math', 'string', 'tostring', 'ipairs', 'pcall', 'loadstring', 'Players', 'LocalPlayer', 'Character', 'Humanoid', 'CharacterAdded', 'TakeDamage', 'Name', 'Workspace'];
+                const keywordList = ['local', 'function', 'end', 'if', 'then', 'else', 'for', 'in', 'while', 'do', 'and', 'or', 'not', 'return', 'true', 'false', 'nil', 'repeat', 'until', 'print', 'game', 'Instance', 'wait', 'math', 'string', 'tostring', 'ipairs', 'pcall', 'loadstring', 'Players', 'LocalPlayer', 'Character', 'Humanoid', 'CharacterAdded', 'TakeDamage', 'Name', 'Workspace', 'fromBase64'];
 
 
                 while ((match = regex.exec(input)) !== null) {
@@ -512,26 +573,6 @@ app.get('/', (req, res) => {
                      resultDiv.innerHTML = "<b class='text-yellow-400'>Tìm thấy " + foundCount + " lệnh \${decryptorName}(), nhưng tất cả đều là các từ khóa Lua/Global.</b>";
                 } else {
                     resultDiv.innerHTML = "<b class='text-red-400'>Không tìm thấy mẫu mã hóa hợp lệ (\${decryptorName})</b>. Vui lòng kiểm tra tên hàm và đảm bảo bạn đã dán TOÀN BỘ code.";
-                }
-            }
-
-            // Hàm giải mã JS tương đương với Lua
-            function xorDecryptJS(b64, key) {
-                const binaryString = atob(b64);
-                let result = "";
-                const kLen = key.length;
-                
-                for (let i = 0; i < binaryString.length; i++) {
-                    const charCode = binaryString.charCodeAt(i);
-                    const keyChar = key.charCodeAt(i % kLen);
-                    result += String.fromCharCode(charCode ^ keyChar);
-                }
-                
-                try {
-                    // Cố gắng decode URI để xử lý ký tự UTF-8 nếu có (như tiếng Việt)
-                    return decodeURIComponent(escape(result));
-                } catch(e) {
-                    return result; 
                 }
             }
         </script>
