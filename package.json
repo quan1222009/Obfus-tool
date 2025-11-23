@@ -1,0 +1,22 @@
+{
+  "name": "render-lua-obfuscator-api",
+  "version": "1.0.0",
+  "description": "Lua Obfuscator API sử dụng luaparse, sẵn sàng để triển khai lên Render.",
+  "main": "api_obfuscator.js",
+  "scripts": {
+    "start": "node api_obfuscator.js"
+  },
+  "keywords": [
+    "roblox",
+    "lua",
+    "obfuscator",
+    "render",
+    "api"
+  ],
+  "author": "gemini-model",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.19.2",
+    "luaparse": "^2.0.0"
+  }
+}
