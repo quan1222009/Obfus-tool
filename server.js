@@ -2,6 +2,7 @@
 const express = require('express');
 const app = express();
 const cors = require('cors');
+// Render.com sẽ tự động gán PORT
 const PORT = process.env.PORT || 3000; 
 
 // Middleware để xử lý JSON body và cho phép CORS
@@ -10,7 +11,7 @@ app.use(cors());
 
 // --- 1. LOGIC OBFUSCATOR (Phần Backend) ---
 
-// Cấu hình Obfuscator
+// Cấu hình Obfuscator (giữ nguyên logic từ khóa)
 const KEYWORD_MAP = {
     'local ': '___A01___', 'function ': '___B02___', 'end': '___C03___', 'if ': '___D04___', 'then': '___E05___', 'else': '___F06___', 'elseif ': '___G07___', 'do': '___H08___', 'while ': '___I09___', 'return ': '___J10___', '=': '___K11___', '(': '___L12___', ')': '___M13___', '{': '___N14___', '}': '___O15___', '[': '___P16___', ']': '___Q17___', ':': '___R18___', ';': '___S19___', ',': '___T20___', 'and ': '___U21___', 'or ': '___V22___', 'not ': '___W23___', 'in ': '___X24___', 'for ': '___Y25___', '~=': '___Z26___', '--': '___ZZZ___', 'nil': '___NIL___', 'break': '___BRK___', 'repeat': '___RPT___', 'until': '___UTL___', 'false': '___FAS___', 'true': '___TRS___',
 };
@@ -21,15 +22,12 @@ const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + mi
 const shuffleArray = (array) => { for (let i = array.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [array[i], array[j]] = [array[j], array[i]]; } };
 const randomChoice = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
-// Hàm mã hóa chuỗi thành mảng số học (ví dụ: 'load' -> {108, 111, 97, 100})
-const encodeString = (str) => {
-    return Array.from(str).map(c => c.charCodeAt(0)).join(',');
-};
+// Hàm mã hóa chuỗi thành mảng số học
+const encodeString = (str) => Array.from(str).map(c => c.charCodeAt(0)).join(',');
 
 // Tạo mã rác
 const generateGarbageModule = (count = 15) => {
     let garbage = [];
-    // ... (logic tạo mã rác giữ nguyên) ...
     const fakeData = randName() + " = \"" + Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2) + "\"";
     garbage.push(`local ${fakeData} -- Dữ liệu rác giả`);
     for (let i = 0; i < count; i++) {
@@ -56,10 +54,17 @@ const generateGarbageModule = (count = 15) => {
     return garbage.join('\n');
 };
 
-// Xử lý Payload (Hex Encoding)
+/**
+ * Xử lý Payload:
+ * 1. Mã hóa từ khóa/cú pháp.
+ * 2. Mã hóa Hex.
+ * 3. Mã hóa XOR bằng Khóa ngẫu nhiên.
+ * @returns { payload: string, key: number }
+ */
 const processPayload = (lua_code) => {
     let code = lua_code;
-    // ... (logic thay thế từ khóa và loại bỏ comment giữ nguyên) ...
+    
+    // 1. Mã hóa từ khóa và loại bỏ comment
     code = code.replace(/--.*?\n/g, '\n');
     const sortedKeys = Object.keys(KEYWORD_MAP).sort((a, b) => b.length - a.length);
     for (const original of sortedKeys) {
@@ -70,100 +75,133 @@ const processPayload = (lua_code) => {
             code = code.split(original).join(replacement);
         }
     }
+    
+    // 2. Mã hóa Hex
     let hex_payload = '';
     for (let i = 0; i < code.length; i++) {
         hex_payload += code.charCodeAt(i).toString(16).padStart(2, '0');
     }
-    return hex_payload;
+    
+    // 3. Mã hóa XOR bằng Khóa ngẫu nhiên (1-255)
+    const xorKey = randomInt(1, 255); 
+    let xor_payload = '';
+    
+    for (let i = 0; i < hex_payload.length; i++) {
+        // Lấy mã ASCII của ký tự Hex và XOR với khóa
+        const charCode = hex_payload.charCodeAt(i) ^ xorKey;
+        // Chuyển lại thành chuỗi Hex để dễ dàng parse trong Lua
+        xor_payload += charCode.toString(16).padStart(2, '0');
+    }
+    
+    return { payload: xor_payload, key: xorKey };
 };
 
-// Tạo Stub Loader (Sử dụng Arithmetic String Encoding)
-const generateStubLoader = (hex_payload, garbage_code) => {
+/**
+ * Tạo Stub Loader phức tạp với XOR Decryption và Control Flow Obfuscation.
+ */
+const generateStubLoader = (xor_data, garbage_code) => {
     
     // Tên biến ngẫu nhiên
     const payloadVar = randName('P');
-    const loaderFunc = randName('L');
+    const xorKeyVar = randName('X');
     const decodeFunc = randName('D');
+    const xorDecodeFunc = randName('XD');
     const coreFunc = randName('C');
     const runFunc = randName('R');
+    const predicateVar = randName('PD'); // Biến cho Control Flow
     
     // 1. Mã hóa các chuỗi quan trọng thành số học
     const encodedStrings = {
-        'load': encodeString('load'),
-        '_G': encodeString('_G'),
-        'string': encodeString('string'),
-        'char': encodeString('char'),
-        'gsub': encodeString('gsub'),
-        'tonumber': encodeString('tonumber'),
+        'load': encodeString('load'), 'string': encodeString('string'), 'char': encodeString('char'), 
+        'gsub': encodeString('gsub'), 'tonumber': encodeString('tonumber'),
     };
 
-    // 2. Hàm giải mã chuỗi từ số học (String Decoder)
+    // 2. Hàm giải mã chuỗi từ số học
     const stringDecoderCode = `
         local ${decodeFunc}
         ${decodeFunc} = function(arr)
             local s = {}
+            local ${randName('C')} = string.char
             for i = 1, #arr do
-                s[i] = string.char(arr[i])
+                s[i] = ${randName('C')}(arr[i])
             end
             return table.concat(s)
         end
     `.trim();
 
-    // 3. Sử dụng String Decoder để tạo Core Function Lookups (Mã hóa chuỗi)
-    const coreFunctionLookups = `
-        local ${coreFunc} = {}
-        ${coreFunc}[${decodeFunc}({${encodedStrings.load}})] = load
-        ${coreFunc}[${decodeFunc}({${encodedStrings._G}})] = _G
-        ${coreFunc}[${decodeFunc}({${encodedStrings.string}})] = string
-        ${coreFunc}[${decodeFunc}({${encodedStrings.char}})] = string.char
-        ${coreFunc}[${decodeFunc}({${encodedStrings.gsub}})] = string.gsub
-        ${coreFunc}[${decodeFunc}({${encodedStrings.tonumber}})] = tonumber
-    `.trim();
-
-    // 4. Định nghĩa hàm giải mã Hex payload
-    // Bây giờ, hàm này sử dụng các biến Core Function đã được ẩn danh
-    const hexDecodeFunc = `
-        local ${loaderFunc}
-        ${loaderFunc} = function(${payloadVar})
-            local ${randName('TEMP_GSUB')} = ${coreFunc}[${decodeFunc}({${encodedStrings.gsub}})]
-            local ${randName('TEMP_TONUM')} = ${coreFunc}[${decodeFunc}({${encodedStrings.tonumber}})]
-            local ${randName('TEMP_CHAR')} = ${coreFunc}[${decodeFunc}({${encodedStrings.char}})]
-
-            local ${randName('D')} = ${randName('TEMP_GSUB')}(${payloadVar}, '..', function(h)
-                local ${randName('I')} = ${randName('TEMP_TONUM')}(h, 16)
+    // 3. Hàm giải mã XOR và Hex
+    const xorHexDecodeFunc = `
+        local ${xorDecodeFunc}
+        ${xorDecodeFunc} = function(${payloadVar}, ${xorKeyVar})
+            local raw_hex = ''
+            local ${randName('TEMP_CHAR')} = string.char
+            local ${randName('TEMP_TONUM')} = tonumber
+            local i = 1
+            while i <= #${payloadVar} do
+                local byte_hex = ${payloadVar}:sub(i, i+1)
+                local char_code = ${randName('TEMP_TONUM')}(byte_hex, 16)
+                local original_char_code = char_code ~ ${xorKeyVar} 
+                raw_hex = raw_hex .. ${randName('TEMP_CHAR')}(original_char_code)
+                i = i + 2
+            end
+            
+            -- Giải mã Hex thành Mã Lua (Sử dụng gsub được giải mã)
+            local ${randName('TEMP_GSUB')} = string.gsub
+            local ${randName('FINAL_TONUM')} = tonumber
+            
+            local ${randName('D')} = ${randName('TEMP_GSUB')}(raw_hex, '..', function(h)
+                local ${randName('I')} = ${randName('FINAL_TONUM')}(h, 16)
                 return ${randName('TEMP_CHAR')}(${randName('I')})
             end)
             return ${randName('D')}
         end
     `.trim();
     
-    // 5. Dòng thực thi (Execute)
-    const executionLine = `
-        -- Bắt đầu quá trình giải mã và thực thi
-        local ${randName('LOAD')} = ${coreFunc}[${decodeFunc}({${encodedStrings.load}})]
-        local ${runFunc} = ${randName('LOAD')}(${loaderFunc}(${payloadVar}))
-        ${runFunc}()
+    // 4. Khai báo biến
+    const payloadDefinition = `local ${payloadVar} = "${xor_data.payload}"`;
+    const keyDefinition = `local ${xorKeyVar} = ${xor_data.key}`; 
+    const predicateCalculation = `local ${predicateVar} = (${xorKeyVar} * 2) > ${xorKeyVar}`; // Luôn luôn True
+    
+    // 5. Control Flow Obfuscation và Thực thi
+    const executionBlock = `
+        -- Lớp Control Flow Obfuscation (luôn luôn True)
+        ${predicateCalculation}
+        if ${predicateVar} then
+            local ${randName('LOOKUP')} = ${decodeFunc}({${encodedStrings.load}})
+            
+            -- Thực hiện giải mã và tải mã
+            local ${randName('LOAD')} = load
+            local ${randName('DECRYPTED_CODE')} = ${xorDecodeFunc}(${payloadVar}, ${xorKeyVar})
+            local ${runFunc} = ${randName('LOAD')}(${randName('DECRYPTED_CODE')})
+            
+            if ${randName('LOAD')} == ${randName('LOAD')} and ${xorKeyVar} ~= 0 then -- Điều kiện giả
+                ${runFunc}()
+            else
+                -- Mã rác giả khi điều kiện sai (không bao giờ chạy)
+                local ${randName('FAIL')} = 100 / 0
+            end
+        else
+            -- Luồng giả mạo, chỉ chứa mã rác
+            local ${randName('FAKE_EXEC')} = ${randName('FAKE_EXEC')} or nil
+        end
     `.trim();
 
-    // 6. Trộn lẫn mã Stub Loader và Mã Rác
+    // 6. Trộn lẫn
     const garbageBlocks = garbage_code.split('\n').filter(line => line.trim() !== '');
-    const payloadDefinition = `local ${payloadVar} = "${hex_payload}"`;
     const structuredBlocks = [];
 
-    // Xáo trộn Dòng/Khối: Chèn rác vào giữa các khối logic
-    structuredBlocks.push(stringDecoderCode); // Đặt String Decoder đầu tiên
+    structuredBlocks.push(stringDecoderCode); 
+    structuredBlocks.push(keyDefinition);
     structuredBlocks.push(payloadDefinition);
-    structuredBlocks.push(...garbageBlocks.slice(0, 3)); 
-    structuredBlocks.push(coreFunctionLookups); // Lookups ẩn danh
-    structuredBlocks.push(...garbageBlocks.slice(3, 6)); 
-    structuredBlocks.push(hexDecodeFunc); // Hex Decoder ẩn danh
-    structuredBlocks.push(...garbageBlocks.slice(6, 9)); 
-    structuredBlocks.push(executionLine);
-    structuredBlocks.push(...garbageBlocks.slice(9)); 
+    structuredBlocks.push(...garbageBlocks.slice(0, 4)); 
+    structuredBlocks.push(xorHexDecodeFunc); 
+    structuredBlocks.push(...garbageBlocks.slice(4, 8)); 
+    structuredBlocks.push(executionBlock);
+    structuredBlocks.push(...garbageBlocks.slice(8)); 
 
     // Thêm Payload Rác Giả Dạng Nhị Phân/Ký tự Đặc biệt
     const binaryNoise = Array.from({ length: 500 }, () => randomChoice(['\\x01', '\\x02', '\\x03', '0', '1', ' '])).join('');
-    const noiseComment = `\n-- Lớp nhiễu giả dạng nhị phân/ký tự Đặc biệt:\n--[[${binaryNoise}]]\n`;
+    const noiseComment = `\n-- Lớp nhiễu giả dạng nhị phân/Ký tự Đặc biệt:\n--[[${binaryNoise}]]\n`;
     
     return structuredBlocks.join('\n\n') + noiseComment;
 };
@@ -178,8 +216,8 @@ app.post('/obfuscate', (req, res) => {
 
     try {
         const garbageCode = generateGarbageModule(15);
-        const hexPayload = processPayload(lua_code);
-        const obfuscatedCode = generateStubLoader(hexPayload, garbageCode);
+        const xorData = processPayload(lua_code); // Lấy cả payload đã XOR và key
+        const obfuscatedCode = generateStubLoader(xorData, garbageCode);
         
         res.json({ 
             success: true, 
@@ -215,7 +253,7 @@ const CLIENT_UI_HTML = `
 
     <div id="app" class="max-w-4xl mx-auto">
         <h1 class="text-3xl font-bold text-green-400 mb-6 text-center">Menu: Lua Obfuscator Toàn Diện</h1>
-        <p class="text-gray-400 mb-8 text-center">Giao diện này gọi API Obfuscate ngay trên máy chủ này.</p>
+        <p class="text-gray-400 mb-8 text-center">Mã hóa XOR và Control Flow Obfuscation đã được áp dụng.</p>
 
         <!-- Container cho Input và Output -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
