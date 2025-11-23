@@ -369,7 +369,6 @@ app.get('/', (req, res) => {
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 
-                <!-- CỘT TRÁI: INPUT & OUTPUT -->
                 <div class="space-y-4">
                     <div class="bg-gray-800 p-5 rounded-xl shadow-lg border border-gray-700">
                         <label class="block text-red-300 font-bold mb-2 flex justify-between">
@@ -390,26 +389,22 @@ app.get('/', (req, res) => {
                         </label>
                         <textarea id="outputCode" class="w-full h-52 bg-gray-900 border border-gray-600 rounded-lg p-3 text-sm font-mono text-yellow-400 focus:outline-none" readonly placeholder="Code đã mã hóa sẽ hiện ở đây..."></textarea>
                         
-                        <!-- NÚT COPY -->
                         <button onclick="copyToClipboard('outputCode')" id="btnCopyOutput" class="absolute top-12 right-7 bg-gray-700 hover:bg-gray-600 text-white text-xs font-bold py-1 px-3 rounded border border-gray-500 transition">
                             📋 COPY
                         </button>
                     </div>
                 </div>
 
-                <!-- CỘT PHẢI: CÔNG CỤ DEOBFUSCATOR -->
                 <div class="space-y-4">
                     <div class="bg-gray-800 p-5 rounded-xl shadow-lg border border-gray-700 border-t-4 border-t-blue-500 h-full">
                         <label class="block text-blue-400 font-bold mb-2">3. Công cụ Giải mã Chuỗi (Deobfuscator):</label>
                         <p class="text-xs text-gray-400 mb-3 font-bold text-yellow-300">⚠️ Code mới sử dụng tên hàm ngẫu nhiên. Vui lòng **COPY TOÀN BỘ** code đã mã hóa và **Nhập tên hàm** nếu biết (ví dụ: _D4f9jGz).</p>
                         
-                        <!-- Tên hàm giải mã -->
                         <div class="mb-3">
                              <input type="text" id="decryptorNameInput" placeholder="Tên hàm giải mã (ví dụ: _D5xYd2z)" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 text-sm font-mono text-red-300 focus:outline-none focus:border-blue-500 transition" value="">
                              <p id="decryptorNameHint" class="text-xs text-green-400 mt-1"></p>
                         </div>
 
-                        <!-- Ô NHẬP DEOBFUSCATE MỚI ĐỘC LẬP -->
                         <textarea id="deobfusInput" class="w-full h-48 bg-gray-900 border border-gray-600 rounded-lg p-3 text-sm font-mono text-gray-300 focus:outline-none focus:border-blue-500 transition" placeholder="Dán code đã mã hóa vào đây để kiểm tra..."></textarea>
 
                         <button onclick="doDeobfuscate()" id="btnDeobfus" class="mt-3 w-full bg-blue-900/50 hover:bg-blue-900/80 text-blue-200 font-bold py-2 px-4 rounded-xl border border-blue-800 transition mb-3 transform hover:scale-[1.01] active:scale-95">
@@ -495,6 +490,94 @@ app.get('/', (req, res) => {
                         const responseText = await res.text();
                         try {
                             const errorData = JSON.parse(responseText);
-                            const errorMsg = \`LỖI HTTP \${res.status} (\${errorData.error || 'Server Error'})\`;
-                            output.value = errorMsg + (errorData.details ? \`\\nChi tiết: \${errorData.details}\` : '');
-                            console.error("L
+                            const errorMsg = `LỖI HTTP ${res.status} (${errorData.error || 'Server Error'})`;
+                            output.value = errorMsg + (errorData.details ? `\nChi tiết: ${errorData.details}` : '');
+                            console.error("Lỗi Server:", errorData);
+                        } catch (e) {
+                            output.value = `LỖI SERVER KHÔNG PHẢN HỒI (HTTP ${res.status}): ${responseText.substring(0, 100)}...`;
+                            console.error("Lỗi phản hồi JSON:", responseText);
+                        }
+                    } else {
+                        // Xử lý phản hồi thành công (200 OK)
+                        const data = await res.json();
+                        output.value = data.obfuscated_code;
+                        lastDecryptorName = data.decryptor_name;
+                        document.getElementById('decryptorNameInput').value = lastDecryptorName; // Cập nhật tên hàm giải mã
+                        decryptorHint.innerText = `Tên hàm giải mã mới: ${lastDecryptorName}`;
+                    }
+
+                } catch (error) {
+                    output.value = `LỖI KẾT NỐI MẠNG: Không thể kết nối đến API.`;
+                    console.error("Lỗi Fetch API:", error);
+                } finally {
+                    btn.innerText = "💀 MÃ HÓA TỐI ĐA (MAX SECURITY)";
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-50');
+                }
+            }
+            
+            // --- LOGIC DEOBFUSCATE CHUỖI ---
+            function doDeobfuscate() {
+                const input = document.getElementById('deobfusInput').value;
+                const resultDiv = document.getElementById('deobfusResult');
+                const decryptorName = document.getElementById('decryptorNameInput').value;
+                
+                resultDiv.innerHTML = '';
+                resultDiv.classList.add('hidden');
+
+                if (!input.trim() || !decryptorName.trim()) {
+                    resultDiv.innerHTML = '<span class="text-red-500">LỖI: Cần Code đã mã hóa và Tên hàm giải mã.</span>';
+                    resultDiv.classList.remove('hidden');
+                    return;
+                }
+
+                const regex = new RegExp(`${decryptorName}\\('(.*?)',\\s*'([a-zA-Z0-9_]+)'\\)`, 'g');
+                
+                let match;
+                let foundStrings = [];
+                let deobfuscatedCount = 0;
+
+                // Lặp qua tất cả các chuỗi được mã hóa
+                while ((match = regex.exec(input)) !== null) {
+                    const encryptedB64 = match[1]; // Chuỗi B64 đã mã hóa
+                    const key = match[2];         // Khóa mã hóa
+
+                    try {
+                        const decryptedText = xorDecryptJS(encryptedB64, key);
+                        deobfuscatedCount++;
+                        foundStrings.push(`<li><span class="text-blue-400">ENCRYPTED:</span> ${match[0]}</li>
+                                            <li><span class="text-green-400">DECRYPTED:</span> "${decryptedText}"</li><hr class="border-gray-600 my-2">`);
+
+                    } catch (e) {
+                        foundStrings.push(`<li class="text-red-500">LỖI GIẢI MÃ: ${match[0]} (Key: ${key})</li><hr class="border-gray-600 my-2">`);
+                    }
+                }
+
+                if (foundStrings.length > 0) {
+                    resultDiv.innerHTML = `<p class="text-sm font-bold mb-2 text-yellow-300">Đã giải mã thành công ${deobfuscatedCount} chuỗi:</p><ul class="list-none p-0">${foundStrings.join('')}</ul>`;
+                } else {
+                    resultDiv.innerHTML = '<span class="text-red-500">KHÔNG TÌM THẤY CHUỖI MÃ HÓA NÀO</span> sử dụng tên hàm đã cung cấp.';
+                }
+
+                resultDiv.classList.remove('hidden');
+            }
+            
+        </script>
+        
+        <script>
+            // Tên hàm giải mã ngẫu nhiên cho lần chạy đầu
+            const initialDecryptor = document.getElementById('decryptorNameInput').value;
+            if (initialDecryptor) {
+                document.getElementById('decryptorNameHint').innerText = \`Tên hàm giải mã khởi tạo: \${initialDecryptor}\`;
+            }
+        </script>
+    </body>
+    </html>
+    `;
+    res.send(html);
+});
+
+// --- 5. Khởi động Server ---
+app.listen(PORT, () => {
+    console.log(`Server đang chạy tại cổng ${PORT}`);
+});
