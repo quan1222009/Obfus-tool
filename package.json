@@ -1,12 +1,13 @@
 {
   "name": "render-lua-obfuscator-api",
   "version": "1.0.0",
+  "description": "Lua Obfuscator API",
   "main": "api_obfuscator.js",
   "scripts": {
     "start": "node api_obfuscator.js"
   },
   "dependencies": {
     "express": "^4.19.2",
-    "luaparse": "1.1.0" 
+    "luaparse": "1.1.0"
   }
 }
