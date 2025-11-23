@@ -36,6 +36,7 @@ const LUA_GLOBALS = new Set([
 
 /**
  * Mã hóa XOR một chuỗi văn bản và trả về chuỗi Base64
+ * FIXED: Sử dụng Buffer của Node.js cho Base64 thay vì hàm global btoa.
  * @param {string} text Chuỗi cần mã hóa.
  * @param {string} key Khóa XOR.
  * @returns {string} Chuỗi đã mã hóa (Base64).
@@ -53,10 +54,9 @@ const xorEncrypt = (text, key) => {
         encryptedBytes[i] = textBytes[i] ^ keyBytes[i % keyBytes.length];
     }
     
-    // Chuyển đổi mảng byte sang chuỗi nhị phân (dùng cho btoa)
-    const binaryString = String.fromCharCode.apply(null, encryptedBytes);
-    // Mã hóa Base64
-    return btoa(binaryString);
+    // SỬA LỖI: Sử dụng Buffer của Node.js để mã hóa Base64 an toàn
+    const base64Encoded = Buffer.from(encryptedBytes).toString('base64');
+    return base64Encoded;
 };
 
 /**
@@ -113,7 +113,7 @@ function traverseAndTransform(node) {
 }
 
 // =========================================================================
-//                          DECRYPTOR HEADER LUA (ĐÃ FIX)
+//                          DECRYPTOR HEADER LUA (ĐÃ FIX Luau)
 // =========================================================================
 
 /**
@@ -160,20 +160,16 @@ app.post('/obfuscate', (req, res) => {
 
     // 1. Khởi tạo
     identifierMap.clear();
-    // Tạo Khóa ngẫu nhiên (dài 8 ký tự)
     ENCRYPTION_KEY = generateRandomIdentifier().substring(0, 8); 
     let finalCode = luaCode; 
 
     try {
         // --- 1. PHÂN TÍCH VÀ BIẾN ĐỔI (AST) ---
-        // Phân tích code Lua
         const ast = luaparseLib.parse(luaCode, { 
              comments: false, 
              locations: true 
         });
-
-        // Áp dụng biến đổi (Đổi tên)
-        traverseAndTransform(ast);
+        traverseAndTransform(ast); // Áp dụng Đổi tên
         
         // --- 2. TÁI TẠO CODE MỚI ---
         
