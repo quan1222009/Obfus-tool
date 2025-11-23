@@ -1,4 +1,4 @@
-// Script Node.js: Obfuscator API - Maximum Obfuscation (Keyword/Table Mapping)
+// Script Node.js: Obfuscator API - Maximum Security (Self-Encoded Decryptor)
 const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000; 
@@ -29,6 +29,7 @@ const LUA_GLOBALS_MAP = {
     'tostring': { table: 1, key: 7 },
     'ipairs': { table: 1, key: 8 },
     'pcall': { table: 1, key: 9 },
+    'loadstring': { table: 1, key: 10 }, // Cần cho Self-Encoded Decryptor
     'Players': { table: 2, key: 1 },
     'LocalPlayer': { table: 2, key: 2 },
     'Character': { table: 2, key: 3 },
@@ -37,18 +38,19 @@ const LUA_GLOBALS_MAP = {
     'TakeDamage': { table: 2, key: 6 },
     'Name': { table: 2, key: 7 },
     'Workspace': { table: 2, key: 8 },
+    'fromBase64': { table: 3, key: 1 }, // string.fromBase64
 };
-// Biến cho các hàm/bảng chung
-const GLOBAL_TABLE_VAR = generateRandomIdentifier(); 
-const KEYWORD_FUNC_VAR = generateRandomIdentifier();
-const KEYWORD_MAP_VAR = generateRandomIdentifier();
-const DECRYPT_FUNC_VAR = '_D'; // Giữ nguyên cho Deobfus Client
+
+const DECRYPTOR_FUNC_NAME = generateRandomIdentifier(); // Tên hàm giải mã (ví dụ: _D5xYd2z)
+const GLOBAL_TABLE_VAR = generateRandomIdentifier(); // Tên bảng Globals (ví dụ: _G9aC3fR)
+const KEYWORD_FUNC_VAR = generateRandomIdentifier(); // Tên hàm Keyword Mapper (ví dụ: _KW7eH4o)
+const KEYWORD_MAP_VAR = generateRandomIdentifier(); // Tên bảng Keyword (ví dụ: _KM2gI1k)
 
 const generateRandomIdentifier = () => '_' + Math.random().toString(36).substring(2, 9);
 
 const xorEncrypt = (text, key) => {
     if (!text) return "";
-    const keyBytes = Buffer.from(key, 'utf-8');
+    const keyBytes = Buffer.from(text, 'utf-8');
     const textBytes = Buffer.from(text, 'utf-8');
     const encryptedBytes = Buffer.alloc(textBytes.length);
     for (let i = 0; i < textBytes.length; i++) {
@@ -86,19 +88,23 @@ function traverseAndRename(node) {
 }
 
 function advancedReplace(code, encryptionKey) {
+    // 1. Thay thế các biến Toàn cục (Global) bằng _G[t][k]
     let codeAfterGlobalReplacement = code;
     Object.keys(LUA_GLOBALS_MAP).forEach(globalName => {
         const { table, key } = LUA_GLOBALS_MAP[globalName];
         const regex = new RegExp(`\\b${globalName}\\b`, 'g');
+        
+        // Xử lý đặc biệt cho string.fromBase64: Thay thế string.fromBase64 thành _G[3][1]
+        if (globalName === 'fromBase64') return; 
+        
         codeAfterGlobalReplacement = codeAfterGlobalReplacement.replace(regex, `${GLOBAL_TABLE_VAR}[${table}][${key}]`);
     });
 
+    // 2. Thay thế các Từ khóa Lua (Keyword) bằng _KW('keyword')
     let finalCode = codeAfterGlobalReplacement;
     LUA_KEYWORDS.forEach(keyword => {
-        // Chỉ thay thế các từ khóa quan trọng có thể bị bắt bởi decompiler/string searching
         if (['local', 'function', 'if', 'then', 'else', 'for', 'in', 'while', 'do', 'return', 'repeat', 'until'].includes(keyword)) {
             const regex = new RegExp(`\\b${keyword}\\b`, 'g');
-            // Thay thế bằng hàm gọi bản đồ từ khóa
             const replacement = `${KEYWORD_FUNC_VAR}('${keyword}')`; 
             finalCode = finalCode.replace(regex, replacement);
         }
@@ -120,9 +126,8 @@ ${KEYWORD_FUNC_VAR}('local') ${dispatcher} = {
 ${code}
         ${stateVar} = 0
     ${KEYWORD_FUNC_VAR}('end') ,
-    [2] = ${KEYWORD_FUNC_VAR}('function') () end,
-    [3] = ${KEYWORD_FUNC_VAR}('function') () end,
-    [4] = ${KEYWORD_FUNC_VAR}('function') () end,
+    [2] = ${KEYWORD_FUNC_VAR}('function') () ${GLOBAL_TABLE_VAR}[1][10]('return nil')() end,
+    [3] = ${KEYWORD_FUNC_VAR}('function') () ${GLOBAL_TABLE_VAR}[1][10]('return nil')() end,
 }
 ${KEYWORD_FUNC_VAR}('local') ${funcName} = ${dispatcher}[${stateVar}]
 ${KEYWORD_FUNC_VAR}('while') ${stateVar} ~= 0 ${KEYWORD_FUNC_VAR}('do')
@@ -135,57 +140,110 @@ ${KEYWORD_FUNC_VAR}('end')
     return flattenedCode;
 }
 
-
-// Header chứa các hàm giải mã chính và ánh xạ
-const LUA_HEADER = (encryptionKey) => {
-    
-    // Tạo bảng ánh xạ các giá trị toàn cục
-    let globalTableCreation = `${KEYWORD_FUNC_VAR}('local') ${GLOBAL_TABLE_VAR} = {}\n`;
-    Object.entries(LUA_GLOBALS_MAP).forEach(([globalName, { table, key }]) => {
-        if (table === 1 && key === 1) { // Chỉ khởi tạo table 1 lần
-             globalTableCreation += `${GLOBAL_TABLE_VAR}[1] = {}\n`;
-        } else if (table === 2 && key === 1) {
-             globalTableCreation += `${GLOBAL_TABLE_VAR}[2] = {}\n`;
-        }
-
-        const encryptedB64 = xorEncrypt(globalName, encryptionKey);
-        globalTableCreation += `${GLOBAL_TABLE_VAR}[${table}][${key}] = ${DECRYPT_FUNC_VAR}('${encryptedB64}', '${encryptionKey}')\n`;
-    });
-    
-    // Tạo bảng ánh xạ từ khóa (chỉ dùng cho mục đích giải mã trong runtime)
-    let keywordMapCreation = `${KEYWORD_FUNC_VAR}('local') ${KEYWORD_MAP_VAR} = {}\n`;
-    LUA_KEYWORDS.forEach(kw => {
-        const encryptedB64 = xorEncrypt(kw, encryptionKey);
-        keywordMapCreation += `${KEYWORD_MAP_VAR}["${kw}"] = ${DECRYPT_FUNC_VAR}('${encryptedB64}', '${encryptionKey}')\n`;
-    });
-    
-    const keywordDecrypter = `
-${KEYWORD_FUNC_VAR}('local') ${KEYWORD_FUNC_VAR} = ${KEYWORD_FUNC_VAR}('function') (key)
-    ${KEYWORD_FUNC_VAR}('return') ${KEYWORD_MAP_VAR}[key]
-${KEYWORD_FUNC_VAR}('end')
-`;
-    // Lưu ý: Các từ khóa trong hàm _D (local, return, end, for, in) không được mã hóa để đảm bảo hàm này chạy được.
-    // Các từ khóa này sau đó bị ẩn bởi Control Flow Flattening ở code chính.
-
+// Hàm giải mã XOR Lua gốc (được mã hóa và thực thi bằng loadstring)
+const ORIGINAL_DECRYPTOR_LUA = (decryptorName, globalTable) => {
     return `
---[[ OBFUSCATED BY RENDER API (MAX STABLE) ]]
-local function ${DECRYPT_FUNC_VAR}(e_b64, k)
-    local success, e = pcall(string.fromBase64, e_b64)
+local function ${decryptorName}(e_b64, k)
+    local success, e = ${globalTable}[1][9](${globalTable}[1][6].fromBase64, ${globalTable}[1][6], e_b64)
     if not success or not e then return "" end
     local r = {}
     local kl = #k
     for i = 1, #e do
-        local enc_byte = string.byte(e, i)
-        local key_byte = string.byte(k, (i - 1) % kl + 1)
+        local enc_byte = ${globalTable}[1][6].byte(e, i)
+        local key_byte = ${globalTable}[1][6].byte(k, (i - 1) % kl + 1)
         local res_byte = bit32 and bit32.bxor(enc_byte, key_byte) or (enc_byte ~ key_byte)
-        table.insert(r, string.char(res_byte))
+        r[#r + 1] = ${globalTable}[1][6].char(res_byte)
     end
-    return table.concat(r)
+    return ${globalTable}[1][6].concat(r)
+end
+return ${decryptorName}
+`;
+}
+
+
+// Header chứa các hàm giải mã chính và ánh xạ
+const LUA_HEADER = (encryptionKey) => {
+    
+    // Khởi tạo bảng Globals (Chỉ chứa các hàm cơ bản để chạy loadstring)
+    let globalTableCreation = `local ${GLOBAL_TABLE_VAR} = {}\n`;
+    const basicGlobals = {
+        'pcall': { table: 1, key: 9 },
+        'loadstring': { table: 1, key: 10 },
+        'string': { table: 1, key: 6 },
+        'string.fromBase64': { table: 3, key: 1 }, 
+    };
+
+    globalTableCreation += `${GLOBAL_TABLE_VAR}[1] = {}\n`;
+    globalTableCreation += `${GLOBAL_TABLE_VAR}[3] = {}\n`;
+
+    Object.entries(LUA_GLOBALS_MAP).forEach(([globalName, { table, key }]) => {
+        if (table === 1 && key <= 10) {
+            const encryptedB64 = xorEncrypt(globalName, encryptionKey);
+            globalTableCreation += `${GLOBAL_TABLE_VAR}[${table}][${key}] = ${globalName}\n`; 
+        } else if (table === 3 && key === 1) { // string.fromBase64
+            globalTableCreation += `${GLOBAL_TABLE_VAR}[${table}][${key}] = string.fromBase64\n`; 
+        }
+    });
+
+    // 1. Mã hóa toàn bộ hàm giải mã ORIGINAL_DECRYPTOR_LUA
+    const rawDecryptor = ORIGINAL_DECRYPTOR_LUA(DECRYPTOR_FUNC_NAME, GLOBAL_TABLE_VAR);
+    const encryptedDecryptor = xorEncrypt(rawDecryptor, encryptionKey);
+
+    // 2. Mã hóa các từ khóa
+    let keywordMapCreation = `local ${KEYWORD_MAP_VAR} = {}\n`;
+    LUA_KEYWORDS.forEach(kw => {
+        const encryptedB64 = xorEncrypt(kw, encryptionKey);
+        keywordMapCreation += `${KEYWORD_MAP_VAR}["${kw}"] = "${encryptedB64}"\n`; // Lưu trữ B64
+    });
+
+    // 3. Script khởi tạo (Self-Execution Block)
+    const selfExecuteScript = `
+--[[ Bước 1: Khởi tạo Globals cơ bản (pcall, loadstring, string) ]]
+${globalTableCreation}
+
+--[[ Bước 2: Giải mã và thực thi hàm giải mã chính (${DECRYPTOR_FUNC_NAME}) ]]
+local function _X(e_b64, k)
+    local success, e = ${GLOBAL_TABLE_VAR}[1][9](${GLOBAL_TABLE_VAR}[3][1], ${GLOBAL_TABLE_VAR}[1][6], e_b64)
+    if not success or not e then return "" end
+    local r = {}
+    local kl = #k
+    for i = 1, #e do
+        local enc_byte = ${GLOBAL_TABLE_VAR}[1][6].byte(e, i)
+        local key_byte = ${GLOBAL_TABLE_VAR}[1][6].byte(k, (i - 1) % kl + 1)
+        local res_byte = bit32 and bit32.bxor(enc_byte, key_byte) or (enc_byte ~ key_byte)
+        r[#r + 1] = ${GLOBAL_TABLE_VAR}[1][6].char(res_byte)
+    end
+    return ${GLOBAL_TABLE_VAR}[1][6].concat(r)
+end
+local ${DECRYPTOR_FUNC_NAME} = _X("${encryptedDecryptor}", "${encryptionKey}")
+${GLOBAL_TABLE_VAR}[1][9](${GLOBAL_TABLE_VAR}[1][10](${DECRYPTOR_FUNC_NAME}))
+
+--[[ Bước 3: Hoàn thành bảng Globals bằng cách giải mã các chuỗi còn lại ]]
+${GLOBAL_TABLE_VAR}[2] = {} -- Khởi tạo Table 2
+${Object.entries(LUA_GLOBALS_MAP).map(([globalName, { table, key }]) => {
+    if (table === 1 && key > 10) { // Các Globals không cơ bản ở Table 1
+        return `${GLOBAL_TABLE_VAR}[${table}][${key}] = ${DECRYPTOR_FUNC_NAME}('${xorEncrypt(globalName, encryptionKey)}', '${encryptionKey}')`;
+    } else if (table === 2) { // Các Globals ở Table 2
+        return `${GLOBAL_TABLE_VAR}[${table}][${key}] = ${DECRYPTOR_FUNC_NAME}('${xorEncrypt(globalName, encryptionKey)}', '${encryptionKey}')`;
+    }
+    return '';
+}).filter(Boolean).join('\n')}
+
+--[[ Bước 4: Khởi tạo Keyword Mapper ]]
+${keywordMapCreation}
+local ${KEYWORD_FUNC_VAR} = function(key) 
+    return ${DECRYPTOR_FUNC_NAME}(${KEYWORD_MAP_VAR}[key], "${encryptionKey}")
 end
 
-${globalTableCreation}
-${keywordMapCreation}
-${keywordDecrypter}
+--[[ Bước 5: Xóa các biến tạm thời để "dọn dẹp" ]]
+_X = nil
+${DECRYPTOR_FUNC_NAME} = nil 
+${KEYWORD_MAP_VAR} = nil
+`;
+
+    return `
+--[[ OBFUSCATED BY RENDER API (MAXIMUM SECURITY) ]]
+${selfExecuteScript}
 `;
 };
 
@@ -218,7 +276,8 @@ app.post('/obfuscate', (req, res) => {
         tokensToReplace.forEach(token => {
             if (token.type === 'string' && token.value) {
                 const encryptedB64 = xorEncrypt(token.value, ENCRYPTION_KEY);
-                const callExpression = `${DECRYPT_FUNC_VAR}('${encryptedB64}', '${ENCRYPTION_KEY}')`; 
+                // Sử dụng hàm giải mã đã được nhúng/tự gọi
+                const callExpression = `${DECRYPTOR_FUNC_NAME}('${encryptedB64}', '${ENCRYPTION_KEY}')`; 
                 const before = currentCode.substring(0, token.start);
                 const after = currentCode.substring(token.end);
                 currentCode = before + callExpression + after;
@@ -245,7 +304,8 @@ app.post('/obfuscate', (req, res) => {
 
         res.json({
             success: true,
-            obfuscated_code: LUA_HEADER(ENCRYPTION_KEY) + "\n" + flattenedCode
+            obfuscated_code: LUA_HEADER(ENCRYPTION_KEY) + "\n" + flattenedCode,
+            decryptor_name: DECRYPTOR_FUNC_NAME // Truyền tên hàm giải mã cho client
         });
 
     } catch (error) {
@@ -270,8 +330,8 @@ app.get('/', (req, res) => {
     <body class="bg-gray-900 text-gray-100 font-sans p-4 md:p-8">
         <div class="max-w-5xl mx-auto">
             <header class="text-center mb-10">
-                <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-600 mb-2">Lua Obfuscator Max (STABLE)</h1>
-                <p class="text-gray-400">Bảo mật tối đa: Mã hóa Từ khóa và Globals.</p>
+                <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-red-400 to-yellow-600 mb-2">Lua Obfuscator MAXIMUM SECURITY</h1>
+                <p class="text-gray-400">Ẩn hàm giải mã, mã hóa toàn bộ từ khóa và globals. Xóa hết bằng chứng chứng cứ.</p>
             </header>
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -279,15 +339,15 @@ app.get('/', (req, res) => {
                 <!-- CỘT TRÁI: INPUT & OUTPUT -->
                 <div class="space-y-4">
                     <div class="bg-gray-800 p-5 rounded-xl shadow-lg border border-gray-700">
-                        <label class="block text-blue-300 font-bold mb-2 flex justify-between">
+                        <label class="block text-red-300 font-bold mb-2 flex justify-between">
                             <span>1. Code Lua Gốc</span>
                             <span class="text-xs text-gray-500 font-normal">Input</span>
                         </label>
-                        <textarea id="inputCode" class="w-full h-40 bg-gray-900 border border-gray-600 rounded-lg p-3 text-sm font-mono text-green-400 focus:outline-none focus:border-blue-500 transition">local welcomeMessage = "Chào mừng bạn!" local damageAmount = 50 local function applyDamage(target, amount) print("Mục tiêu bị trừ " .. tostring(amount) .. " máu.") end local player = game.Players.LocalPlayer print(welcomeMessage) applyDamage(player.Character.Humanoid, damageAmount)</textarea>
+                        <textarea id="inputCode" class="w-full h-40 bg-gray-900 border border-gray-600 rounded-lg p-3 text-sm font-mono text-green-400 focus:outline-none focus:border-red-500 transition">local welcomeMessage = "Chào mừng bạn!" local damageAmount = 50 local function applyDamage(target, amount) print("Mục tiêu bị trừ " .. tostring(amount) .. " máu.") end local player = game.Players.LocalPlayer print(welcomeMessage) applyDamage(player.Character.Humanoid, damageAmount)</textarea>
                     </div>
                     
-                    <button onclick="doObfuscate()" id="btnObfus" class="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition transform hover:scale-[1.02] active:scale-95">
-                        🛡️ MÃ HÓA TỐI ĐA (Obfuscate Max)
+                    <button onclick="doObfuscate()" id="btnObfus" class="w-full bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition transform hover:scale-[1.02] active:scale-95">
+                        💀 MÃ HÓA TỐI ĐA (MAX SECURITY)
                     </button>
 
                     <div class="bg-gray-800 p-5 rounded-xl shadow-lg border border-gray-700 relative">
@@ -306,14 +366,20 @@ app.get('/', (req, res) => {
 
                 <!-- CỘT PHẢI: CÔNG CỤ DEOBFUSCATOR -->
                 <div class="space-y-4">
-                    <div class="bg-gray-800 p-5 rounded-xl shadow-lg border border-gray-700 border-t-4 border-t-red-500 h-full">
-                        <label class="block text-red-400 font-bold mb-2">3. Công cụ Giải mã Chuỗi (Deobfuscator):</label>
-                        <p class="text-xs text-gray-400 mb-3 font-bold text-yellow-300">⚠️ Vui lòng COPY TOÀN BỘ code đã mã hóa (bao gồm cả hàm _D ở đầu) vào ô dưới đây.</p>
+                    <div class="bg-gray-800 p-5 rounded-xl shadow-lg border border-gray-700 border-t-4 border-t-blue-500 h-full">
+                        <label class="block text-blue-400 font-bold mb-2">3. Công cụ Giải mã Chuỗi (Deobfuscator):</label>
+                        <p class="text-xs text-gray-400 mb-3 font-bold text-yellow-300">⚠️ Code mới sử dụng tên hàm ngẫu nhiên. Vui lòng **COPY TOÀN BỘ** code đã mã hóa và **Nhập tên hàm** nếu biết (ví dụ: _D4f9jGz).</p>
                         
-                        <!-- Ô NHẬP DEOBFUSCATE MỚI ĐỘC LẬP -->
-                        <textarea id="deobfusInput" class="w-full h-48 bg-gray-900 border border-gray-600 rounded-lg p-3 text-sm font-mono text-gray-300 focus:outline-none focus:border-red-500 transition" placeholder="Dán code đã mã hóa vào đây để kiểm tra..."></textarea>
+                        <!-- Tên hàm giải mã -->
+                        <div class="mb-3">
+                             <input type="text" id="decryptorNameInput" placeholder="Tên hàm giải mã (ví dụ: _D5xYd2z)" class="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 text-sm font-mono text-red-300 focus:outline-none focus:border-blue-500 transition" value="">
+                             <p id="decryptorNameHint" class="text-xs text-green-400 mt-1"></p>
+                        </div>
 
-                        <button onclick="doDeobfuscate()" id="btnDeobfus" class="mt-3 w-full bg-red-900/50 hover:bg-red-900/80 text-red-200 font-bold py-2 px-4 rounded-xl border border-red-800 transition mb-3 transform hover:scale-[1.01] active:scale-95">
+                        <!-- Ô NHẬP DEOBFUSCATE MỚI ĐỘC LẬP -->
+                        <textarea id="deobfusInput" class="w-full h-48 bg-gray-900 border border-gray-600 rounded-lg p-3 text-sm font-mono text-gray-300 focus:outline-none focus:border-blue-500 transition" placeholder="Dán code đã mã hóa vào đây để kiểm tra..."></textarea>
+
+                        <button onclick="doDeobfuscate()" id="btnDeobfus" class="mt-3 w-full bg-blue-900/50 hover:bg-blue-900/80 text-blue-200 font-bold py-2 px-4 rounded-xl border border-blue-800 transition mb-3 transform hover:scale-[1.01] active:scale-95">
                             🔓 GIẢI MÃ CHUỖI ẨN (Decode Strings)
                         </button>
                         
@@ -324,6 +390,8 @@ app.get('/', (req, res) => {
         </div>
 
         <script>
+            let lastDecryptorName = '';
+
             // --- LOGIC COPY ---
             function copyToClipboard(elementId) {
                 const element = document.getElementById(elementId);
@@ -348,6 +416,7 @@ app.get('/', (req, res) => {
                 const btn = document.getElementById('btnObfus');
                 const input = document.getElementById('inputCode').value;
                 const output = document.getElementById('outputCode');
+                const decryptorHint = document.getElementById('decryptorNameHint');
                 
                 if(!input.trim()) {
                     alert("Vui lòng nhập code!");
@@ -368,6 +437,11 @@ app.get('/', (req, res) => {
                     
                     if(data.success) {
                         output.value = data.obfuscated_code;
+                        // Cập nhật tên hàm giải mã cho client
+                        lastDecryptorName = data.decryptor_name || '';
+                        document.getElementById('decryptorNameInput').value = lastDecryptorName;
+                        decryptorHint.innerText = \`Tên hàm giải mã hiện tại: \${lastDecryptorName}\`;
+                        
                         // Tự động dán vào ô Deobfus để người dùng test ngay
                         document.getElementById('deobfusInput').value = data.obfuscated_code;
                         document.getElementById('deobfusResult').classList.add('hidden');
@@ -377,7 +451,7 @@ app.get('/', (req, res) => {
                 } catch(e) {
                     output.value = "Lỗi kết nối server: " + e.message;
                 }
-                btn.innerText = "🛡️ MÃ HÓA TỐI ĐA (Obfuscate Max)";
+                btn.innerText = "💀 MÃ HÓA TỐI ĐA (MAX SECURITY)";
                 btn.disabled = false;
                 btn.classList.remove('opacity-50');
             }
@@ -386,20 +460,23 @@ app.get('/', (req, res) => {
             function doDeobfuscate() {
                 const input = document.getElementById('deobfusInput').value;
                 const resultDiv = document.getElementById('deobfusResult');
+                const decryptorName = document.getElementById('decryptorNameInput').value.trim();
                 
-                if (!input.trim()) {
+                if (!input.trim() || !decryptorName) {
                     resultDiv.classList.remove('hidden');
-                    resultDiv.innerHTML = "<b class='text-red-400'>Vui lòng dán code đã mã hóa vào ô trên.</b>";
+                    resultDiv.innerHTML = "<b class='text-red-400'>Vui lòng dán code VÀ nhập tên hàm giải mã.</b>";
                     return;
                 }
-
-                // Regex mạnh mẽ hơn để bắt _D('base64', 'key')
-                // Bắt chính xác _D, theo sau là bất kỳ ký tự khoảng trắng nào, mở ngoặc, và các tham số chuỗi đơn/kép.
-                const regex = /_D\s*\(\s*(['"])([^'"]+)\1\s*,\s*(['"])([^'"]+)\3\s*\)/g;
                 
+                // Regex mạnh mẽ: sử dụng tên hàm ngẫu nhiên lấy từ input/lastDecryptorName
+                // Bắt chính xác TênHàm('base64', 'key')
+                const regex = new RegExp(decryptorName + '\\s*\\(\\s*([\'"])([^"\']+)\\1\\s*,\\s*([\'"])([^"\']+)\\3\\s*\\)', 'g');
+
                 let match;
                 let foundCount = 0;
                 let decodedStrings = [];
+                const keywordList = ['local', 'function', 'end', 'if', 'then', 'else', 'for', 'in', 'while', 'do', 'and', 'or', 'not', 'return', 'true', 'false', 'nil', 'repeat', 'until', 'print', 'game', 'Instance', 'wait', 'math', 'string', 'tostring', 'ipairs', 'pcall', 'loadstring', 'Players', 'LocalPlayer', 'Character', 'Humanoid', 'CharacterAdded', 'TakeDamage', 'Name', 'Workspace'];
+
 
                 while ((match = regex.exec(input)) !== null) {
                     foundCount++;
@@ -408,8 +485,9 @@ app.get('/', (req, res) => {
                     const key = match[4];
                     try {
                         const decodedStr = xorDecryptJS(b64, key);
+                        
                         // Chỉ hiển thị các chuỗi không phải là từ khóa Lua (đã biết trước)
-                        if (!['local', 'function', 'end', 'if', 'then', 'else', 'for', 'in', 'while', 'do', 'and', 'or', 'not', 'return', 'true', 'false', 'nil', 'repeat', 'until', 'print', 'game', 'Instance', 'wait', 'math', 'string', 'tostring', 'ipairs', 'pcall', 'Players', 'LocalPlayer', 'Character', 'Humanoid', 'CharacterAdded', 'TakeDamage', 'Name', 'Workspace'].includes(decodedStr)) {
+                        if (!keywordList.includes(decodedStr)) {
                              decodedStrings.push(\`[\${foundCount}] "\${decodedStr}"\`);
                         }
                        
@@ -422,9 +500,9 @@ app.get('/', (req, res) => {
                 if(decodedStrings.length > 0) {
                     resultDiv.innerHTML = "<b class='text-green-400'>Tìm thấy " + decodedStrings.length + " chuỗi người dùng ẩn:</b><br>" + decodedStrings.join('<br>');
                 } else if (foundCount > 0 && decodedStrings.length === 0) {
-                     resultDiv.innerHTML = "<b class='text-yellow-400'>Tìm thấy " + foundCount + " lệnh _D(), nhưng tất cả đều là các từ khóa Lua.</b> Vui lòng kiểm tra lại code gốc của bạn.";
+                     resultDiv.innerHTML = "<b class='text-yellow-400'>Tìm thấy " + foundCount + " lệnh \${decryptorName}(), nhưng tất cả đều là các từ khóa Lua/Global.</b>";
                 } else {
-                    resultDiv.innerHTML = "<b class='text-red-400'>Không tìm thấy mẫu mã hóa hợp lệ (_D)</b>. Vui lòng đảm bảo bạn đã dán TOÀN BỘ code đã mã hóa.";
+                    resultDiv.innerHTML = "<b class='text-red-400'>Không tìm thấy mẫu mã hóa hợp lệ (\${decryptorName})</b>. Vui lòng kiểm tra tên hàm và đảm bảo bạn đã dán TOÀN BỘ code.";
                 }
             }
 
