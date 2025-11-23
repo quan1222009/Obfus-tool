@@ -10,13 +10,9 @@ app.use(cors());
 
 // --- 1. LOGIC OBFUSCATOR (Phần Backend) ---
 
-// Cấu hình Obfuscator (giữ nguyên logic mạnh mẽ)
+// Cấu hình Obfuscator
 const KEYWORD_MAP = {
     'local ': '___A01___', 'function ': '___B02___', 'end': '___C03___', 'if ': '___D04___', 'then': '___E05___', 'else': '___F06___', 'elseif ': '___G07___', 'do': '___H08___', 'while ': '___I09___', 'return ': '___J10___', '=': '___K11___', '(': '___L12___', ')': '___M13___', '{': '___N14___', '}': '___O15___', '[': '___P16___', ']': '___Q17___', ':': '___R18___', ';': '___S19___', ',': '___T20___', 'and ': '___U21___', 'or ': '___V22___', 'not ': '___W23___', 'in ': '___X24___', 'for ': '___Y25___', '~=': '___Z26___', '--': '___ZZZ___', 'nil': '___NIL___', 'break': '___BRK___', 'repeat': '___RPT___', 'until': '___UTL___', 'false': '___FAS___', 'true': '___TRS___',
-};
-
-const CORE_FUNCTIONS = {
-    'string.gsub': 'STR_GSUB', 'string.char': 'STR_CHAR', 'tonumber': 'TO_NUM', 'load': 'LOAD_FUNC', '_G': '_G_TABLE',
 };
 
 // Hàm tiện ích
@@ -25,9 +21,15 @@ const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + mi
 const shuffleArray = (array) => { for (let i = array.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [array[i], array[j]] = [array[j], array[i]]; } };
 const randomChoice = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
+// Hàm mã hóa chuỗi thành mảng số học (ví dụ: 'load' -> {108, 111, 97, 100})
+const encodeString = (str) => {
+    return Array.from(str).map(c => c.charCodeAt(0)).join(',');
+};
+
 // Tạo mã rác
 const generateGarbageModule = (count = 15) => {
     let garbage = [];
+    // ... (logic tạo mã rác giữ nguyên) ...
     const fakeData = randName() + " = \"" + Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2) + "\"";
     garbage.push(`local ${fakeData} -- Dữ liệu rác giả`);
     for (let i = 0; i < count; i++) {
@@ -54,9 +56,10 @@ const generateGarbageModule = (count = 15) => {
     return garbage.join('\n');
 };
 
-// Xử lý Payload
+// Xử lý Payload (Hex Encoding)
 const processPayload = (lua_code) => {
     let code = lua_code;
+    // ... (logic thay thế từ khóa và loại bỏ comment giữ nguyên) ...
     code = code.replace(/--.*?\n/g, '\n');
     const sortedKeys = Object.keys(KEYWORD_MAP).sort((a, b) => b.length - a.length);
     for (const original of sortedKeys) {
@@ -74,55 +77,93 @@ const processPayload = (lua_code) => {
     return hex_payload;
 };
 
-// Tạo Stub Loader
+// Tạo Stub Loader (Sử dụng Arithmetic String Encoding)
 const generateStubLoader = (hex_payload, garbage_code) => {
+    
+    // Tên biến ngẫu nhiên
     const payloadVar = randName('P');
     const loaderFunc = randName('L');
-    const finalLoadVar = randName('F');
-    const randomFuncs = {};
-    for (const key in CORE_FUNCTIONS) { randomFuncs[CORE_FUNCTIONS[key]] = randName('F'); }
+    const decodeFunc = randName('D');
+    const coreFunc = randName('C');
+    const runFunc = randName('R');
     
-    const coreFunctionLookups = `
-        local ${randomFuncs['_G_TABLE']} = _G
-        local ${randomFuncs['STR_GSUB']} = ${randomFuncs['_G_TABLE']}['string']['gsub']
-        local ${randomFuncs['STR_CHAR']} = ${randomFuncs['_G_TABLE']}['string']['char']
-        local ${randomFuncs['TO_NUM']} = ${randomFuncs['_G_TABLE']}['tonumber']
-        local ${randomFuncs['LOAD_FUNC']} = ${randomFuncs['_G_TABLE']}['load']
+    // 1. Mã hóa các chuỗi quan trọng thành số học
+    const encodedStrings = {
+        'load': encodeString('load'),
+        '_G': encodeString('_G'),
+        'string': encodeString('string'),
+        'char': encodeString('char'),
+        'gsub': encodeString('gsub'),
+        'tonumber': encodeString('tonumber'),
+    };
+
+    // 2. Hàm giải mã chuỗi từ số học (String Decoder)
+    const stringDecoderCode = `
+        local ${decodeFunc}
+        ${decodeFunc} = function(arr)
+            local s = {}
+            for i = 1, #arr do
+                s[i] = string.char(arr[i])
+            end
+            return table.concat(s)
+        end
     `.trim();
 
-    const decodeFuncCode = `
+    // 3. Sử dụng String Decoder để tạo Core Function Lookups (Mã hóa chuỗi)
+    const coreFunctionLookups = `
+        local ${coreFunc} = {}
+        ${coreFunc}[${decodeFunc}({${encodedStrings.load}})] = load
+        ${coreFunc}[${decodeFunc}({${encodedStrings._G}})] = _G
+        ${coreFunc}[${decodeFunc}({${encodedStrings.string}})] = string
+        ${coreFunc}[${decodeFunc}({${encodedStrings.char}})] = string.char
+        ${coreFunc}[${decodeFunc}({${encodedStrings.gsub}})] = string.gsub
+        ${coreFunc}[${decodeFunc}({${encodedStrings.tonumber}})] = tonumber
+    `.trim();
+
+    // 4. Định nghĩa hàm giải mã Hex payload
+    // Bây giờ, hàm này sử dụng các biến Core Function đã được ẩn danh
+    const hexDecodeFunc = `
         local ${loaderFunc}
         ${loaderFunc} = function(${payloadVar})
-            local ${randName('D')} = ${randomFuncs['STR_GSUB']}(${payloadVar}, '..', function(h)
-                local ${randName('I')} = ${randomFuncs['TO_NUM']}(h, 16)
-                return ${randomFuncs['STR_CHAR']}(${randName('I')})
+            local ${randName('TEMP_GSUB')} = ${coreFunc}[${decodeFunc}({${encodedStrings.gsub}})]
+            local ${randName('TEMP_TONUM')} = ${coreFunc}[${decodeFunc}({${encodedStrings.tonumber}})]
+            local ${randName('TEMP_CHAR')} = ${coreFunc}[${decodeFunc}({${encodedStrings.char}})]
+
+            local ${randName('D')} = ${randName('TEMP_GSUB')}(${payloadVar}, '..', function(h)
+                local ${randName('I')} = ${randName('TEMP_TONUM')}(h, 16)
+                return ${randName('TEMP_CHAR')}(${randName('I')})
             end)
             return ${randName('D')}
         end
     `.trim();
     
+    // 5. Dòng thực thi (Execute)
     const executionLine = `
         -- Bắt đầu quá trình giải mã và thực thi
-        local ${finalLoadVar} = ${randomFuncs['LOAD_FUNC']}(${loaderFunc}(${payloadVar}))
-        ${finalLoadVar}()
+        local ${randName('LOAD')} = ${coreFunc}[${decodeFunc}({${encodedStrings.load}})]
+        local ${runFunc} = ${randName('LOAD')}(${loaderFunc}(${payloadVar}))
+        ${runFunc}()
     `.trim();
 
+    // 6. Trộn lẫn mã Stub Loader và Mã Rác
     const garbageBlocks = garbage_code.split('\n').filter(line => line.trim() !== '');
     const payloadDefinition = `local ${payloadVar} = "${hex_payload}"`;
     const structuredBlocks = [];
 
     // Xáo trộn Dòng/Khối: Chèn rác vào giữa các khối logic
+    structuredBlocks.push(stringDecoderCode); // Đặt String Decoder đầu tiên
     structuredBlocks.push(payloadDefinition);
     structuredBlocks.push(...garbageBlocks.slice(0, 3)); 
-    structuredBlocks.push(coreFunctionLookups);
+    structuredBlocks.push(coreFunctionLookups); // Lookups ẩn danh
     structuredBlocks.push(...garbageBlocks.slice(3, 6)); 
-    structuredBlocks.push(decodeFuncCode);
+    structuredBlocks.push(hexDecodeFunc); // Hex Decoder ẩn danh
     structuredBlocks.push(...garbageBlocks.slice(6, 9)); 
     structuredBlocks.push(executionLine);
     structuredBlocks.push(...garbageBlocks.slice(9)); 
 
+    // Thêm Payload Rác Giả Dạng Nhị Phân/Ký tự Đặc biệt
     const binaryNoise = Array.from({ length: 500 }, () => randomChoice(['\\x01', '\\x02', '\\x03', '0', '1', ' '])).join('');
-    const noiseComment = `\n-- Lớp nhiễu giả dạng nhị phân/ký tự đặc biệt:\n--[[${binaryNoise}]]\n`;
+    const noiseComment = `\n-- Lớp nhiễu giả dạng nhị phân/ký tự Đặc biệt:\n--[[${binaryNoise}]]\n`;
     
     return structuredBlocks.join('\n\n') + noiseComment;
 };
