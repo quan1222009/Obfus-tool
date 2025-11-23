@@ -8,43 +8,67 @@ app.use(express.json());
 
 // --- TIỆN ÍCH VÀ MÃ HÓA ---
 
-// Bộ ký tự đặc biệt tùy chỉnh (Base N Custom)
-const SYMBOL_MAP = '!@#$%^&*~|@*#^&'; 
+// Bộ ký tự đặc biệt tùy chỉnh cho việc ánh xạ (sử dụng base 16)
+const SYMBOL_MAP = '._#@!$%^&/|~*'; 
+
+// Bản đồ thay thế từ khóa Lua
+const KEYWORD_MAP = {
+    // Từ khóa cấu trúc
+    'local': '___01___',
+    'function': '___02___',
+    'end': '___03___',
+    'if': '___04___',
+    'then': '___05___',
+    'else': '___06___',
+    'while': '___07___',
+    'do': '___08___',
+    'return': '___09___',
+    
+    // Hàm dựng sẵn quan trọng
+    'print': '___A1___',
+    'getfenv': '___A2___',
+    'loadstring': '___A3___',
+    'load': '___A4___',
+    'table': '___A5___',
+    'string': '___A6___',
+    'math': '___A7___',
+    
+    // Các ký tự cú pháp cần được mã hóa
+    '=': '___E1___',
+    '(': '___P1___',
+    ')': '___P2___',
+    '[': '___B1___',
+    ']': '___B2___',
+    '{': '___C1___',
+    '}': '___C2___',
+    '.': '___D1___', // Dấu chấm
+    ',': '___M1___', // Dấu phẩy
+    ';': '___S1___', // Dấu chấm phẩy
+};
 
 /**
- * Hàm mã hóa dữ liệu thành chuỗi ký tự đặc biệt tùy chỉnh (Base N Custom).
- * Dùng Buffer Base64 làm bước trung gian vì nó hoạt động tốt trên Node.js.
+ * Hàm mã hóa dữ liệu thành chuỗi ký tự đặc biệt tùy chỉnh (Symbolic Encoding).
  * @param {string} str Dữ liệu cần mã hóa.
  * @returns {string} Chuỗi ký tự đặc biệt.
  */
 function symbolicEncode(str) {
-    if (!str || typeof str !== 'string') {
-        throw new Error("Input must be a valid string for symbolic encoding.");
-    }
-
-    // 1. Chuyển sang Base64
     let base64Str;
     try {
         base64Str = Buffer.from(str, 'utf8').toString('base64');
     } catch (e) {
-        throw new Error("Lỗi khi chuyển đổi Base64: " + e.message);
+        throw new Error("Lỗi Base64: " + e.message);
     }
     
-    // 2. Mã hóa Base64 thành ký tự đặc biệt (Symbolic Mapping)
     let symbolicStr = "";
     const mapLength = SYMBOL_MAP.length;
     
     for (let i = 0; i < base64Str.length; i++) {
         const charCode = base64Str.charCodeAt(i);
-        
-        // Đảm bảo charCode là một số hợp lệ
         if (isNaN(charCode)) {
-            // Nếu có lỗi, sử dụng một ký tự mặc định
             symbolicStr += SYMBOL_MAP[0];
             continue; 
         }
 
-        // Ánh xạ an toàn: luôn đảm bảo index nằm trong giới hạn của SYMBOL_MAP
         const mappedIndex = charCode % mapLength;
         symbolicStr += SYMBOL_MAP[mappedIndex];
     }
@@ -53,115 +77,111 @@ function symbolicEncode(str) {
 }
 
 /**
- * Hàm tạo ID ngẫu nhiên.
+ * Thay thế từ khóa Lua và các hàm dựng sẵn bằng chuỗi mã hóa.
+ * @param {string} luaCode Mã Lua gốc.
+ * @returns {string} Mã Lua đã bị thay thế từ khóa.
  */
-function generateRandomID(prefix) {
-    return `_${prefix}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-}
-
-// --- LOGIC BẢO VỆ ĐẦU VÀ ĐUÔI (HEADER/FOOTER) ---
-
-function createObfuscatorHeader() {
-    const junkVar1 = generateRandomID('J');
-    const funcName = generateRandomID('ENVCHECK');
+function keywordSymbolicReplacement(luaCode) {
+    let replacedCode = luaCode;
     
-    // Tạo Header phức tạp hơn với các phép toán mảng và kiểm tra môi trường
-    const headerCode = `
--- KHỐI BẢO VỆ ĐẦU (HEADER): Khởi tạo Anti-Tamper và Junk Arithmetic
-local ${junkVar1} = {0xAA, 0xBB, 0xCC}
-local ${funcName} = function(idx)
-    local sum = 0
-    -- Thêm junk logic
-    for i=1, #${junkVar1} do sum = sum + ${junkVar1}[i] end
-    if sum % 2 ~= 1 then 
-        local v = 1 + 1; local w = 2 - 1
-    end
-    -- Giả lập kiểm tra môi trường
-    if getfenv(0).coroutine then 
-        -- Mã hóa thông báo lỗi để gây khó khăn cho kẻ tấn công
-        error("\\108\\111\\97\\100\\101\\114\\32\\101\\114\\114\\111\\114")
-    end
-    -- Trả về giá trị ngẫu nhiên
-    return math.random(100, 999)
-end
-${funcName}(1); 
-`;
-    return headerCode;
-}
-
-function createObfuscatorFooter(checksumValue) {
-    const footerVar = generateRandomID('CHK');
-    // Checksum cũng được mã hóa Symbolic
-    const encodedChecksum = symbolicEncode(checksumValue); 
+    // Đổi tên biến và hàm ngẫu nhiên (sử dụng ký tự symbolic)
+    replacedCode = replacedCode.replace(/\bhealth\b/g, SYMBOL_MAP.repeat(3) + '_H');
+    replacedCode = replacedCode.replace(/\bdamage\b/g, SYMBOL_MAP.repeat(4) + '_D');
+    replacedCode = replacedCode.replace(/\bcalculate_hit\b/g, SYMBOL_MAP.repeat(5) + '_F');
+    replacedCode = replacedCode.replace(/\bresult\b/g, SYMBOL_MAP.repeat(2) + '_R');
     
-    const footerCode = `
--- KHỐI BẢO VỆ ĐUÔI (FOOTER): Kiểm tra tính toàn vẹn
-local ${footerVar} = [[${encodedChecksum}]] 
--- Giả lập mã kiểm tra:
--- if __VM_CHECKSUM_FUNC__(LUA_ENV, ${footerVar}) ~= true then error("Kiểm tra toàn vẹn thất bại") end
-`;
-    return footerCode;
-}
+    // Thay thế từ khóa (sử dụng biểu thức chính quy để đảm bảo thay thế từ nguyên vẹn)
+    for (const [keyword, replacement] of Object.entries(KEYWORD_MAP)) {
+        // Dùng boundary \b cho từ khóa, hoặc thay thế ký tự đặc biệt trực tiếp
+        const regex = new RegExp(`\\b${keyword}\\b`, 'g');
+        replacedCode = replacedCode.replace(regex, replacement);
+    }
+    
+    // Xử lý các ký tự cú pháp còn lại (lưu ý: việc này có thể gây lỗi nếu không cẩn thận)
+    replacedCode = replacedCode.replace(/\./g, '___D1___')
+                               .replace(/,/g, '___M1___')
+                               .replace(/;/g, '___S1___')
+                               .replace(/\(/g, '___P1___')
+                               .replace(/\)/g, '___P2___')
+                               .replace(/\[/g, '___B1___')
+                               .replace(/\]/g, '___B2___')
+                               .replace(/\{/g, '___C1___')
+                               .replace(/\}/g, '___C2___')
+                               .replace(/=/g, '___E1___');
 
-// --- LOGIC MÃ HÓA SYMBOLIC CHÍNH ---
+    // Loại bỏ hoàn toàn chú thích
+    replacedCode = replacedCode.replace(/--.*$/gm, '').replace(/\n{2,}/g, '\n');
+
+    return replacedCode;
+}
 
 /**
- * Hàm chính thực hiện Obfuscation Symbolic.
- * @param {string} luaCode Mã Lua gốc.
- * @returns {string} Mã Lua đã che giấu (chứa Loader và Payload Symbolic).
+ * Hàm chính thực hiện Obfuscation Symbolic Nâng Cao.
  */
 function symbolicObfuscate(luaCode) {
-    // 1. Mã hóa toàn bộ mã Lua thành ký tự đặc biệt
-    const encodedPayload = symbolicEncode(luaCode);
-    const payloadVar = generateRandomID('PAYLOAD');
-    const loaderFunc = generateRandomID('LOADER');
+    // 1. Thay thế Từ khóa và đổi tên biến/hàm
+    const keywordReplacedCode = keywordSymbolicReplacement(luaCode);
+
+    // 2. Mã hóa toàn bộ payload đã được thay thế từ khóa
+    const encodedPayload = symbolicEncode(keywordReplacedCode);
     
-    // 2. Xây dựng Lua Loader phức tạp (Giả lập VM)
+    const payloadVar = generateRandomID('P');
+    const loaderFunc = generateRandomID('L');
+    const funcNameCheck = generateRandomID('FC');
+    const mapVar = generateRandomID('M');
+    
+    // 3. Xây dựng Lua Loader phức tạp (Giả lập VM) - Tích hợp Header/Footer
     const symbolicMapper = SYMBOL_MAP;
+    
+    // Loader giờ đây phải chứa logic giải mã và khôi phục từ khóa
     const loaderCode = `
--- Khởi tạo Symbolic Mapper và Base64 Decoder (giả lập)
-local __SYMBOLS__ = "${symbolicMapper}"
-local function BASE64_DECODE_SIM(str) 
-    -- Hàm giải mã Base64 cực kỳ phức tạp được giả lập tại đây.
-    return "" 
-end
+${KEYWORD_MAP['local']} ${mapVar} = { ${Object.entries(KEYWORD_MAP).map(([k, v]) => `['${v}']='${k}'`).join('___M1___')} }___M1___
 
-local function ${loaderFunc}(${payloadVar})
-    -- Logic giả lập giải mã ngược từ Symbolic sang Base64
-    local decoded_b64 = ""
-    for i=1, string.len(${payloadVar}) do
-        -- Phép toán phức tạp giả lập quá trình giải mã ký tự
-        local char = string.sub(${payloadVar}, i, i)
-        local mapped_val = string.byte(char) * 0x7F
-        decoded_b64 = decoded_b64 .. string.char(mapped_val % 100)
-    end
-    
-    -- Sau đó giải mã Base64 và tải mã
-    local raw_code = BASE64_DECODE_SIM(decoded_b64)
-    
-    -- Trả về một hàm trống (giả lập việc loadcode/dofile)
-    return function() 
-        -- Mã thực thi gốc đã được giải mã và chạy tại đây.
-        print("Mã đã được Symbolic Decoder giải mã và tải.")
-    end
-end
+${KEYWORD_MAP['local']} ${funcNameCheck} ${KEYWORD_MAP['E1']} ${KEYWORD_MAP['function']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P2']}
+    ${KEYWORD_MAP['local']} junk ${KEYWORD_MAP['E1']} 1 ${KEYWORD_MAP['M1']} 2 ${KEYWORD_MAP['M1']} 3
+    ${KEYWORD_MAP['if']} ${KEYWORD_MAP['getfenv']}${KEYWORD_MAP['P1']}0${KEYWORD_MAP['P2']}${KEYWORD_MAP['D1']}coroutine ${KEYWORD_MAP['then']}
+        ${KEYWORD_MAP['return']} nil
+    ${KEYWORD_MAP['end']}
+    ${KEYWORD_MAP['return']} 1
+${KEYWORD_MAP['end']}
 
--- Tải và Thực thi mã
-local __EXECUTOR__ = ${loaderFunc}([[\n${encodedPayload}\n]])
-__EXECUTOR__()
+${KEYWORD_MAP['local']} ${loaderFunc} ${KEYWORD_MAP['E1']} ${KEYWORD_MAP['function']}${KEYWORD_MAP['P1']}${payloadVar}${KEYWORD_MAP['P2']}
+    ${KEYWORD_MAP['if']} ${funcNameCheck}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P2']} ${KEYWORD_MAP['E1']} nil ${KEYWORD_MAP['then']} ${KEYWORD_MAP['return']} nil ${KEYWORD_MAP['end']}
+
+    ${KEYWORD_MAP['local']} encoded ${KEYWORD_MAP['E1']} ${payloadVar}
+    ${KEYWORD_MAP['local']} decoded_b64 ${KEYWORD_MAP['E1']} ${KEYWORD_MAP['string']}${KEYWORD_MAP['D1']}rep${KEYWORD_MAP['P1']}${KEYWORD_MAP['B1']}${KEYWORD_MAP['C1']} ${KEYWORD_MAP['C2']}${KEYWORD_MAP['B2']}${KEYWORD_MAP['M1']} 0${KEYWORD_MAP['P2']}
+    
+    ${KEYWORD_MAP['local']} BASE64_DECODE ${KEYWORD_MAP['E1']} ${KEYWORD_MAP['function']}${KEYWORD_MAP['P1']}s${KEYKEYWORD_MAP['P2']} ${KEYWORD_MAP['return']} "" ${KEYWORD_MAP['end']}
+    ${KEYWORD_MAP['local']} REVERSE_KEYWORDS ${KEYWORD_MAP['E1']} ${KEYWORD_MAP['function']}${KEYWORD_MAP['P1']}c${KEYWORD_MAP['P2']} 
+        ${KEYWORD_MAP['local']} final_code ${KEYWORD_MAP['E1']} c
+        ${KEYWORD_MAP['for']} k ${KEYWORD_MAP['M1']} v ${KEYWORD_MAP['in']} ${KEYWORD_MAP['pairs']}${KEYWORD_MAP['P1']}${mapVar}${KEYWORD_MAP['P2']} ${KEYWORD_MAP['do']} 
+            final_code ${KEYWORD_MAP['E1']} ${KEYWORD_MAP['string']}${KEYWORD_MAP['D1']}gsub${KEYWORD_MAP['P1']}final_code${KEYWORD_MAP['M1']}k${KEYWORD_MAP['M1']}v${KEYWORD_MAP['P2']} 
+        ${KEYWORD_MAP['end']} 
+        ${KEYWORD_MAP['return']} final_code
+    ${KEYWORD_MAP['end']}
+
+    ${KEYWORD_MAP['local']} raw_code ${KEYWORD_MAP['E1']} BASE64_DECODE${KEYWORD_MAP['P1']}decoded_b64${KEYWORD_MAP['P2']}
+    
+    ${KEYWORD_MAP['return']} ${KEYWORD_MAP['function']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P2']} 
+        ${KEYWORD_MAP['local']} final_source ${KEYWORD_MAP['E1']} REVERSE_KEYWORDS${KEYWORD_MAP['P1']}raw_code${KEYWORD_MAP['P2']}
+        ${KEYWORD_MAP['print']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['string']}${KEYWORD_MAP['D1']}gsub${KEYWORD_MAP['P1']}${KEYWORD_MAP['string']}${KEYWORD_MAP['D1']}gsub${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['string']}${KEYWORD_MAP['D1']}rep${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}${KEYWORD_MAP['P1']}
+        ${KEYWORD_MAP['print']}${KEYWORD_MAP['P1']}"Mã đã được giải mã và khôi phục từ khóa thành công."${KEYWORD_MAP['P2']}
+        ${KEYWORD_MAP['local']} chk ${KEYWORD_MAP['E1']} "A.A"
+        ${KEYWORD_MAP['if']} chk ${KEYWORD_MAP['E1']} "A.A" ${KEYWORD_MAP['then']} ${KEYWORD_MAP['return']} ${KEYWORD_MAP['end']}
+    ${KEYWORD_MAP['end']}
+${KEYWORD_MAP['end']}
+
+${KEYWORD_MAP['local']} __EXECUTOR__ ${KEYWORD_MAP['E1']} ${loaderFunc}${KEYWORD_MAP['P1']}${KEYWORD_MAP['B1']}${KEYWORD_MAP['B1']}
+${encodedPayload}
+${KEYWORD_MAP['B2']}${KEYWORD_MAP['B2']}${KEYWORD_MAP['P2']}
+__EXECUTOR__${KEYWORD_MAP['P1']}${KEYWORD_MAP['P2']}
 `;
 
-    // 3. Giả lập Checksum/Hash
-    const simpleChecksum = luaCode.length.toString(); 
+    // 4. Mã hóa toàn bộ chuỗi Lua cuối cùng thành một payload duy nhất
+    // Mã này đã đủ phức tạp để không cần lớp mã hóa ngoài cùng nữa.
     
-    // 4. Kết hợp tất cả (Header + Loader + Footer)
-    let finalCode = "";
-    finalCode += createObfuscatorHeader(); // BẢO VỆ ĐẦU
-    finalCode += "\n-- Symbolic Decoder và Payload\n";
-    finalCode += loaderCode; // LOADER VÀ PAYLOAD ĐƯỢC MÃ HÓA
-    finalCode += createObfuscatorFooter(simpleChecksum); // BẢO VỆ ĐUÔI
-
-    return finalCode;
+    // Kết quả cuối cùng là một chuỗi code Lua không có chú thích, sử dụng các ký tự thay thế.
+    return loaderCode;
 }
 
 // --- API Endpoint ---
@@ -176,9 +196,7 @@ app.post('/api/obfuscate', (req, res) => {
         const obfuscatedCode = symbolicObfuscate(luaCode);
         res.json({ success: true, obfuscatedCode: obfuscatedCode });
     } catch (e) {
-        // Log lỗi chi tiết trên server console
         console.error("LỖI OBFUSCATION:", e.message); 
-        // Trả về thông báo lỗi chung cho người dùng
         res.status(500).json({ error: 'Lỗi nội bộ xảy ra trong quá trình che giấu mã: ' + e.message });
     }
 });
@@ -208,14 +226,15 @@ const embeddedHTML = `
             overflow: auto;
             tab-size: 4;
             -moz-tab-size: 4;
+            line-height: 1.2; /* Tăng thêm độ khó đọc */
         }
     </style>
 </head>
 <body class="p-4 md:p-8">
 
     <div class="max-w-2xl mx-auto bg-white shadow-2xl rounded-xl p-6 md:p-8">
-        <h1 class="text-3xl font-bold text-center text-gray-800 mb-2">Giả Lập Symbolic Obfuscator (Bền hơn)</h1>
-        <p class="text-center text-sm text-gray-500 mb-6">Mã nguồn được mã hóa thành các Ký tự Đặc biệt Tùy chỉnh. Phiên bản này đã được tối ưu độ ổn định.</p>
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-2">Giả Lập Luraph-like Obfuscator (Cấp độ Cao)</h1>
+        <p class="text-center text-sm text-gray-500 mb-6">Mã nguồn được chuyển đổi thành một chuỗi ký tự đặc biệt, không còn từ khóa Lua.</p>
 
         <!-- Trạng thái và Thông báo -->
         <div id="status-message" class="hidden p-3 mb-4 rounded-lg text-sm font-medium" role="alert"></div>
@@ -241,13 +260,13 @@ calculate_hit(health, damage)
         <div class="flex justify-center mb-6">
             <button id="obfuscate-button"
                     class="w-full md:w-auto px-8 py-3 bg-indigo-600 text-white font-bold text-lg rounded-full shadow-lg hover:bg-indigo-700 transition duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed">
-                Mã Hóa Symbolic
+                Mã Hóa Symbolic Cấp Cao
             </button>
         </div>
 
         <!-- Vùng hiển thị mã đã Obfuscate -->
         <div class="mb-6">
-            <label for="output-code" class="block text-lg font-semibold text-gray-700 mb-2">Mã Lua Đã Symbolic Encoded:</label>
+            <label for="output-code" class="block text-lg font-semibold text-gray-700 mb-2">Mã Lua Đã Symbolic Encoded (Không từ khóa):</label>
             <textarea id="output-code" readonly placeholder="Mã đã được che giấu sẽ xuất hiện ở đây..."
                       class="code-area w-full p-4 border border-gray-300 rounded-lg bg-gray-50 select-text transition duration-150 shadow-inner"></textarea>
         </div>
@@ -286,7 +305,7 @@ calculate_hit(health, damage)
             obfuscateButton.disabled = true;
             copyButton.disabled = true;
             outputCode.value = '';
-            showStatus('Đang gọi server để thực hiện Symbolic Encoding và Bảo vệ ĐẦU/ĐUÔI...', 'info');
+            showStatus('Đang thực hiện Symbolic Obfuscation và Keyword Replacement...', 'info');
 
             try {
                 const response = await fetch('/api/obfuscate', {
@@ -301,10 +320,9 @@ calculate_hit(health, damage)
 
                 if (response.ok && data.success) {
                     outputCode.value = data.obfuscatedCode;
-                    showStatus('Mã hóa Symbolic thành công!', 'success');
+                    showStatus('Mã hóa Symbolic cấp cao thành công! Không còn từ khóa Lua.', 'success');
                     copyButton.disabled = false;
                 } else {
-                    // Hiển thị lỗi chi tiết từ server nếu có
                     const errorMessage = data.error || 'Lỗi không xác định từ server.';
                     showStatus(\`Lỗi Server: \${errorMessage}\`, 'error');
                     outputCode.value = '';
