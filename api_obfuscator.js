@@ -14,10 +14,14 @@ try {
 }
 
 // --- 2. Logic Mã Hóa (Server Side) ---
+
+// ĐỊNH NGHĨA HÀM TRƯỚC KHI SỬ DỤNG
+const generateRandomIdentifier = () => '_' + Math.random().toString(36).substring(2, 9);
+
 const identifierMap = new Map();
 const LUA_KEYWORDS = [
     'local', 'function', 'end', 'if', 'then', 'else', 'for', 'in', 'while', 'do',
-    'and', 'or', 'not', 'return', 'true', 'false', 'nil', 'repeat', 'until',
+    'and', 'or', 'not', 'return', 'true', 'false', 'nil', 'repeat', 'until', 'break',
 ];
 const LUA_GLOBALS_MAP = {
     'print': { table: 1, key: 1 },
@@ -41,16 +45,17 @@ const LUA_GLOBALS_MAP = {
     'fromBase64': { table: 3, key: 1 }, // string.fromBase64
 };
 
+// Biến cho cấu trúc tự mã hóa/phẳng hóa luồng điều khiển
 const DECRYPTOR_FUNC_NAME = generateRandomIdentifier(); // Tên hàm giải mã (ví dụ: _D5xYd2z)
 const GLOBAL_TABLE_VAR = generateRandomIdentifier(); // Tên bảng Globals (ví dụ: _G9aC3fR)
 const KEYWORD_FUNC_VAR = generateRandomIdentifier(); // Tên hàm Keyword Mapper (ví dụ: _KW7eH4o)
 const KEYWORD_MAP_VAR = generateRandomIdentifier(); // Tên bảng Keyword (ví dụ: _KM2gI1k)
 
-const generateRandomIdentifier = () => '_' + Math.random().toString(36).substring(2, 9);
 
 const xorEncrypt = (text, key) => {
     if (!text) return "";
-    const keyBytes = Buffer.from(text, 'utf-8');
+    // Sửa lỗi: Đảm bảo keyBytes được tạo từ tham số 'key'
+    const keyBytes = Buffer.from(key, 'utf-8'); 
     const textBytes = Buffer.from(text, 'utf-8');
     const encryptedBytes = Buffer.alloc(textBytes.length);
     for (let i = 0; i < textBytes.length; i++) {
@@ -94,7 +99,7 @@ function advancedReplace(code, encryptionKey) {
         const { table, key } = LUA_GLOBALS_MAP[globalName];
         const regex = new RegExp(`\\b${globalName}\\b`, 'g');
         
-        // Xử lý đặc biệt cho string.fromBase64: Thay thế string.fromBase64 thành _G[3][1]
+        // Xử lý đặc biệt cho string.fromBase64
         if (globalName === 'fromBase64') return; 
         
         codeAfterGlobalReplacement = codeAfterGlobalReplacement.replace(regex, `${GLOBAL_TABLE_VAR}[${table}][${key}]`);
@@ -103,7 +108,8 @@ function advancedReplace(code, encryptionKey) {
     // 2. Thay thế các Từ khóa Lua (Keyword) bằng _KW('keyword')
     let finalCode = codeAfterGlobalReplacement;
     LUA_KEYWORDS.forEach(keyword => {
-        if (['local', 'function', 'if', 'then', 'else', 'for', 'in', 'while', 'do', 'return', 'repeat', 'until'].includes(keyword)) {
+        // Chỉ thay thế các từ khóa quan trọng
+        if (['local', 'function', 'if', 'then', 'else', 'for', 'in', 'while', 'do', 'return', 'repeat', 'until', 'break'].includes(keyword)) {
             const regex = new RegExp(`\\b${keyword}\\b`, 'g');
             const replacement = `${KEYWORD_FUNC_VAR}('${keyword}')`; 
             finalCode = finalCode.replace(regex, replacement);
@@ -118,6 +124,7 @@ function controlFlowFlatten(code) {
     const stateVar = generateRandomIdentifier();
     const dispatcher = generateRandomIdentifier();
     const funcName = generateRandomIdentifier();
+    // Đã xóa deadCodeBlock1 và deadCodeBlock2 vì chúng không được sử dụng
 
     const flattenedCode = `
 ${KEYWORD_FUNC_VAR}('local') ${stateVar} = 1
@@ -126,8 +133,9 @@ ${KEYWORD_FUNC_VAR}('local') ${dispatcher} = {
 ${code}
         ${stateVar} = 0
     ${KEYWORD_FUNC_VAR}('end') ,
-    [2] = ${KEYWORD_FUNC_VAR}('function') () ${GLOBAL_TABLE_VAR}[1][10]('return nil')() end,
-    [3] = ${KEYWORD_FUNC_VAR}('function') () ${GLOBAL_TABLE_VAR}[1][10]('return nil')() end,
+    -- Khối dead code để làm rối (chạy loadstring('return nil'))
+    [2] = ${KEYWORD_FUNC_VAR}('function') () ${GLOBAL_TABLE_VAR}[1][10](${KEYWORD_FUNC_VAR}('return') ${KEYWORD_FUNC_VAR}('nil'))() ${KEYWORD_FUNC_VAR}('end'),
+    [3] = ${KEYWORD_FUNC_VAR}('function') () ${GLOBAL_TABLE_VAR}[1][10](${KEYWORD_FUNC_VAR}('return') ${KEYWORD_FUNC_VAR}('nil'))() ${KEYWORD_FUNC_VAR}('end'),
 }
 ${KEYWORD_FUNC_VAR}('local') ${funcName} = ${dispatcher}[${stateVar}]
 ${KEYWORD_FUNC_VAR}('while') ${stateVar} ~= 0 ${KEYWORD_FUNC_VAR}('do')
@@ -142,9 +150,11 @@ ${KEYWORD_FUNC_VAR}('end')
 
 // Hàm giải mã XOR Lua gốc (được mã hóa và thực thi bằng loadstring)
 const ORIGINAL_DECRYPTOR_LUA = (decryptorName, globalTable) => {
+    // Lưu ý: Các từ khóa 'local', 'function', 'return', 'end' trong hàm này phải được giữ nguyên
+    // để nó có thể được loadstring và trả về (trước khi hàm Keyword Mapper được setup).
     return `
 local function ${decryptorName}(e_b64, k)
-    local success, e = ${globalTable}[1][9](${globalTable}[1][6].fromBase64, ${globalTable}[1][6], e_b64)
+    local success, e = ${globalTable}[1][9](${globalTable}[3][1], ${globalTable}[1][6], e_b64)
     if not success or not e then return "" end
     local r = {}
     local kl = #k
@@ -166,19 +176,13 @@ const LUA_HEADER = (encryptionKey) => {
     
     // Khởi tạo bảng Globals (Chỉ chứa các hàm cơ bản để chạy loadstring)
     let globalTableCreation = `local ${GLOBAL_TABLE_VAR} = {}\n`;
-    const basicGlobals = {
-        'pcall': { table: 1, key: 9 },
-        'loadstring': { table: 1, key: 10 },
-        'string': { table: 1, key: 6 },
-        'string.fromBase64': { table: 3, key: 1 }, 
-    };
-
     globalTableCreation += `${GLOBAL_TABLE_VAR}[1] = {}\n`;
     globalTableCreation += `${GLOBAL_TABLE_VAR}[3] = {}\n`;
 
+    // Khởi tạo các global cần thiết cho quá trình tự giải mã
     Object.entries(LUA_GLOBALS_MAP).forEach(([globalName, { table, key }]) => {
         if (table === 1 && key <= 10) {
-            const encryptedB64 = xorEncrypt(globalName, encryptionKey);
+            // pcall, loadstring, string được gán trực tiếp
             globalTableCreation += `${GLOBAL_TABLE_VAR}[${table}][${key}] = ${globalName}\n`; 
         } else if (table === 3 && key === 1) { // string.fromBase64
             globalTableCreation += `${GLOBAL_TABLE_VAR}[${table}][${key}] = string.fromBase64\n`; 
@@ -202,7 +206,9 @@ const LUA_HEADER = (encryptionKey) => {
 ${globalTableCreation}
 
 --[[ Bước 2: Giải mã và thực thi hàm giải mã chính (${DECRYPTOR_FUNC_NAME}) ]]
+-- Tạo hàm tạm thời _X (chứa logic giải mã) để tự giải mã ORIGINAL_DECRYPTOR_LUA
 local function _X(e_b64, k)
+    -- Sử dụng các globals đã được map
     local success, e = ${GLOBAL_TABLE_VAR}[1][9](${GLOBAL_TABLE_VAR}[3][1], ${GLOBAL_TABLE_VAR}[1][6], e_b64)
     if not success or not e then return "" end
     local r = {}
@@ -215,16 +221,18 @@ local function _X(e_b64, k)
     end
     return ${GLOBAL_TABLE_VAR}[1][6].concat(r)
 end
+-- Giải mã ORIGINAL_DECRYPTOR_LUA và lưu kết quả vào DECRYPTOR_FUNC_NAME
 local ${DECRYPTOR_FUNC_NAME} = _X("${encryptedDecryptor}", "${encryptionKey}")
+-- Chạy loadstring(DECRYPTOR_FUNC_NAME) để định nghĩa DECRYPTOR_FUNC_NAME là hàm
 ${GLOBAL_TABLE_VAR}[1][9](${GLOBAL_TABLE_VAR}[1][10](${DECRYPTOR_FUNC_NAME}))
 
 --[[ Bước 3: Hoàn thành bảng Globals bằng cách giải mã các chuỗi còn lại ]]
 ${GLOBAL_TABLE_VAR}[2] = {} -- Khởi tạo Table 2
 ${Object.entries(LUA_GLOBALS_MAP).map(([globalName, { table, key }]) => {
     if (table === 1 && key > 10) { // Các Globals không cơ bản ở Table 1
-        return `${GLOBAL_TABLE_VAR}[${table}][${key}] = ${DECRYPTOR_FUNC_NAME}('${xorEncrypt(globalName, encryptionKey)}', '${encryptionKey}')`;
+        return `${GLOBAL_TABLE_VAR}[${table}][${key}] = _X('${xorEncrypt(globalName, encryptionKey)}', '${encryptionKey}')`;
     } else if (table === 2) { // Các Globals ở Table 2
-        return `${GLOBAL_TABLE_VAR}[${table}][${key}] = ${DECRYPTOR_FUNC_NAME}('${xorEncrypt(globalName, encryptionKey)}', '${encryptionKey}')`;
+        return `${GLOBAL_TABLE_VAR}[${table}][${key}] = _X('${xorEncrypt(globalName, encryptionKey)}', '${encryptionKey}')`;
     }
     return '';
 }).filter(Boolean).join('\n')}
@@ -232,12 +240,12 @@ ${Object.entries(LUA_GLOBALS_MAP).map(([globalName, { table, key }]) => {
 --[[ Bước 4: Khởi tạo Keyword Mapper ]]
 ${keywordMapCreation}
 local ${KEYWORD_FUNC_VAR} = function(key) 
-    return ${DECRYPTOR_FUNC_NAME}(${KEYWORD_MAP_VAR}[key], "${encryptionKey}")
+    -- Sử dụng hàm _X (vẫn còn) để giải mã chuỗi từ khóa
+    return _X(${KEYWORD_MAP_VAR}[key], "${encryptionKey}")
 end
 
 --[[ Bước 5: Xóa các biến tạm thời để "dọn dẹp" ]]
 _X = nil
-${DECRYPTOR_FUNC_NAME} = nil 
 ${KEYWORD_MAP_VAR} = nil
 `;
 
@@ -276,7 +284,7 @@ app.post('/obfuscate', (req, res) => {
         tokensToReplace.forEach(token => {
             if (token.type === 'string' && token.value) {
                 const encryptedB64 = xorEncrypt(token.value, ENCRYPTION_KEY);
-                // Sử dụng hàm giải mã đã được nhúng/tự gọi
+                // Dùng tên hàm giải mã ngẫu nhiên đã được tự thực thi
                 const callExpression = `${DECRYPTOR_FUNC_NAME}('${encryptedB64}', '${ENCRYPTION_KEY}')`; 
                 const before = currentCode.substring(0, token.start);
                 const after = currentCode.substring(token.end);
@@ -419,7 +427,8 @@ app.get('/', (req, res) => {
                 const decryptorHint = document.getElementById('decryptorNameHint');
                 
                 if(!input.trim()) {
-                    alert("Vui lòng nhập code!");
+                    // Use custom modal or message box instead of alert()
+                    output.value = "LỖI: Vui lòng nhập code!";
                     return;
                 }
 
@@ -519,6 +528,7 @@ app.get('/', (req, res) => {
                 }
                 
                 try {
+                    // Cố gắng decode URI để xử lý ký tự UTF-8 nếu có (như tiếng Việt)
                     return decodeURIComponent(escape(result));
                 } catch(e) {
                     return result; 
