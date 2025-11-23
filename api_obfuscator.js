@@ -149,8 +149,6 @@ ${KEYWORD_FUNC_VAR}('end')
 
 // Hàm giải mã XOR Lua gốc (được mã hóa và thực thi bằng loadstring)
 const ORIGINAL_DECRYPTOR_LUA = (decryptorName, globalTable) => {
-    // Lưu ý: Các từ khóa 'local', 'function', 'return', 'end' trong hàm này phải được giữ nguyên
-    // để nó có thể được loadstring và trả về (trước khi hàm Keyword Mapper được setup).
     return `
 local function ${decryptorName}(e_b64, k)
     local success, e = ${globalTable}[1][9](${globalTable}[3][1], ${globalTable}[1][6], e_b64)
@@ -338,8 +336,9 @@ app.post('/obfuscate', (req, res) => {
         });
 
     } catch (error) {
-        console.error("LỖI OBFUSCATOR SERVER:", error);
-        res.status(400).json({ error: "Lỗi cú pháp Lua.", details: error.message });
+        console.error("LỖI OBFUSCATOR SERVER (Lỗi Cú pháp Lua):", error);
+        // Trả về lỗi 400 và chi tiết lỗi
+        res.status(400).json({ error: "LỖI SERVER: Cú pháp Lua không hợp lệ hoặc lỗi xử lý AST.", details: error.message });
     }
 });
 
@@ -474,7 +473,7 @@ app.get('/', (req, res) => {
                 const decryptorHint = document.getElementById('decryptorNameHint');
                 
                 output.value = ""; // Xóa output cũ
-
+                
                 if(!input.trim()) {
                     output.value = "LỖI: Vui lòng nhập code Lua vào ô Code Lua Gốc.";
                     return;
@@ -492,96 +491,10 @@ app.get('/', (req, res) => {
                     });
                     
                     if (!res.ok) {
-                        // Xử lý lỗi HTTP (ví dụ: 400, 500)
-                        const errorData = await res.json().catch(() => ({ error: 'Không thể đọc lỗi từ server.' }));
-                        const errorMsg = \`LỖI HTTP \${res.status}: \${errorData.error || 'Server Internal Error'}\`;
-                        output.value = errorMsg + (errorData.details ? \`\\nChi tiết: \${errorData.details}\` : '');
-                        console.error("LỖI OBFUSCATOR SERVER TRẢ VỀ:", errorData);
-                        return;
-                    }
-                    
-                    const data = await res.json();
-                    
-                    if(data.success) {
-                        output.value = data.obfuscated_code;
-                        // Cập nhật tên hàm giải mã cho client
-                        lastDecryptorName = data.decryptor_name || '';
-                        document.getElementById('decryptorNameInput').value = lastDecryptorName;
-                        decryptorHint.innerText = \`Tên hàm giải mã hiện tại: \${lastDecryptorName}\`;
-                        
-                        // Tự động dán vào ô Deobfus để người dùng test ngay
-                        document.getElementById('deobfusInput').value = data.obfuscated_code;
-                        document.getElementById('deobfusResult').classList.add('hidden');
-                    } else {
-                        // Lỗi logic trả về 200 nhưng success: false
-                        output.value = "LỖI LOGIC: " + (data.error || data.details || "Không rõ");
-                    }
-                } catch(e) {
-                    // Lỗi kết nối (Network Error)
-                    output.value = "LỖI KẾT NỐI: Không thể gửi yêu cầu đến Server. Vui lòng kiểm tra Console (F12).";
-                    console.error("LỖI KẾT NỐI:", e);
-                }
-                btn.innerText = "💀 MÃ HÓA TỐI ĐA (MAX SECURITY)";
-                btn.disabled = false;
-                btn.classList.remove('opacity-50');
-            }
-
-            // --- LOGIC GIẢI MÃ CHUỖI TẠI TRÌNH DUYỆT (FIXED AND ROBUST) ---
-            function doDeobfuscate() {
-                const input = document.getElementById('deobfusInput').value;
-                const resultDiv = document.getElementById('deobfusResult');
-                const decryptorName = document.getElementById('decryptorNameInput').value.trim();
-                
-                if (!input.trim() || !decryptorName) {
-                    resultDiv.classList.remove('hidden');
-                    resultDiv.innerHTML = "<b class='text-red-400'>Vui lòng dán code VÀ nhập tên hàm giải mã.</b>";
-                    return;
-                }
-                
-                // Regex mạnh mẽ: sử dụng tên hàm ngẫu nhiên lấy từ input/lastDecryptorName
-                // Bắt chính xác TênHàm('base64', 'key')
-                const regex = new RegExp(decryptorName + '\\s*\\(\\s*([\'"])([^"\']+)\\1\\s*,\\s*([\'"])([^"\']+)\\3\\s*\\)', 'g');
-
-                let match;
-                let foundCount = 0;
-                let decodedStrings = [];
-                const keywordList = ['local', 'function', 'end', 'if', 'then', 'else', 'for', 'in', 'while', 'do', 'and', 'or', 'not', 'return', 'true', 'false', 'nil', 'repeat', 'until', 'print', 'game', 'Instance', 'wait', 'math', 'string', 'tostring', 'ipairs', 'pcall', 'loadstring', 'Players', 'LocalPlayer', 'Character', 'Humanoid', 'CharacterAdded', 'TakeDamage', 'Name', 'Workspace', 'fromBase64'];
-
-
-                while ((match = regex.exec(input)) !== null) {
-                    foundCount++;
-                    // match[2] là base64 data, match[4] là key
-                    const b64 = match[2];
-                    const key = match[4];
-                    try {
-                        const decodedStr = xorDecryptJS(b64, key);
-                        
-                        // Chỉ hiển thị các chuỗi không phải là từ khóa Lua (đã biết trước)
-                        if (!keywordList.includes(decodedStr)) {
-                             decodedStrings.push(\`[\${foundCount}] "\${decodedStr}"\`);
-                        }
-                       
-                    } catch(e) {
-                        decodedStrings.push(\`[\${foundCount}] <span class="text-red-400">(Lỗi giải mã chuỗi)</span>\`);
-                    }
-                }
-
-                resultDiv.classList.remove('hidden');
-                if(decodedStrings.length > 0) {
-                    resultDiv.innerHTML = "<b class='text-green-400'>Tìm thấy " + decodedStrings.length + " chuỗi người dùng ẩn:</b><br>" + decodedStrings.join('<br>');
-                } else if (foundCount > 0 && decodedStrings.length === 0) {
-                     resultDiv.innerHTML = "<b class='text-yellow-400'>Tìm thấy " + foundCount + " lệnh \${decryptorName}(), nhưng tất cả đều là các từ khóa Lua/Global.</b>";
-                } else {
-                    resultDiv.innerHTML = "<b class='text-red-400'>Không tìm thấy mẫu mã hóa hợp lệ (\${decryptorName})</b>. Vui lòng kiểm tra tên hàm và đảm bảo bạn đã dán TOÀN BỘ code.";
-                }
-            }
-        </script>
-    </body>
-    </html>
-    `;
-    res.send(html);
-});
-
-app.listen(PORT, () => {
-    console.log(`✅ Server running on port ${PORT}`);
-});
+                        // Xử lý lỗi HTTP (4xx, 5xx)
+                        const responseText = await res.text();
+                        try {
+                            const errorData = JSON.parse(responseText);
+                            const errorMsg = \`LỖI HTTP \${res.status} (\${errorData.error || 'Server Error'})\`;
+                            output.value = errorMsg + (errorData.details ? \`\\nChi tiết: \${errorData.details}\` : '');
+                            console.error("L
