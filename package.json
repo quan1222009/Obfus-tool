@@ -1,13 +1,21 @@
 {
-  "name": "render-lua-obfuscator-api",
-  "version": "1.0.0",
-  "description": "Lua Obfuscator API",
-  "main": "api_obfuscator.js",
-  "scripts": {
-    "start": "node api_obfuscator.js"
-  },
-  "dependencies": {
-    "express": "^4.19.2",
-    "luaparse": "^0.3.1"
-  }
+"name": "lua-obfuscator-simulator",
+"version": "1.0.0",
+"description": "A simple Lua obfuscator simulator using Node.js and Express for deployment on Render.",
+"main": "server.js",
+"scripts": {
+"start": "node server.js"
+},
+"keywords": [
+"nodejs",
+"express",
+"lua",
+"obfuscator",
+"render"
+],
+"author": "",
+"license": "ISC",
+"dependencies": {
+"express": "^4.18.2"
+}
 }
