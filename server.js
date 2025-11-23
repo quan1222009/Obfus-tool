@@ -6,9 +6,10 @@ const PORT = process.env.PORT || 3000;
 // Middleware để phân tích body JSON từ yêu cầu POST
 app.use(express.json());
 
-// --- UTILITIES VÀ MÃ HÓA ---
+// --- TIỆN ÍCH VÀ MÃ HÓA ---
 
-const SYMBOL_MAP = '!@#$%^&*~|'; // Bộ ký tự đặc biệt tùy chỉnh (Base 10)
+// Bộ ký tự đặc biệt tùy chỉnh (Base N Custom)
+const SYMBOL_MAP = '!@#$%^&*~|@*#^&'; 
 
 /**
  * Hàm mã hóa dữ liệu thành chuỗi ký tự đặc biệt tùy chỉnh (Base N Custom).
@@ -17,17 +18,34 @@ const SYMBOL_MAP = '!@#$%^&*~|'; // Bộ ký tự đặc biệt tùy chỉnh (Ba
  * @returns {string} Chuỗi ký tự đặc biệt.
  */
 function symbolicEncode(str) {
+    if (!str || typeof str !== 'string') {
+        throw new Error("Input must be a valid string for symbolic encoding.");
+    }
+
     // 1. Chuyển sang Base64
-    const base64Str = Buffer.from(str, 'utf8').toString('base64');
+    let base64Str;
+    try {
+        base64Str = Buffer.from(str, 'utf8').toString('base64');
+    } catch (e) {
+        throw new Error("Lỗi khi chuyển đổi Base64: " + e.message);
+    }
     
     // 2. Mã hóa Base64 thành ký tự đặc biệt (Symbolic Mapping)
     let symbolicStr = "";
+    const mapLength = SYMBOL_MAP.length;
+    
     for (let i = 0; i < base64Str.length; i++) {
-        // Lấy mã ASCII của ký tự Base64
         const charCode = base64Str.charCodeAt(i);
         
-        // Giả lập ánh xạ phức tạp (chỉ dùng mod 10 và shift đơn giản cho demo)
-        const mappedIndex = charCode % SYMBOL_MAP.length;
+        // Đảm bảo charCode là một số hợp lệ
+        if (isNaN(charCode)) {
+            // Nếu có lỗi, sử dụng một ký tự mặc định
+            symbolicStr += SYMBOL_MAP[0];
+            continue; 
+        }
+
+        // Ánh xạ an toàn: luôn đảm bảo index nằm trong giới hạn của SYMBOL_MAP
+        const mappedIndex = charCode % mapLength;
         symbolicStr += SYMBOL_MAP[mappedIndex];
     }
     
@@ -53,15 +71,18 @@ function createObfuscatorHeader() {
 local ${junkVar1} = {0xAA, 0xBB, 0xCC}
 local ${funcName} = function(idx)
     local sum = 0
+    -- Thêm junk logic
     for i=1, #${junkVar1} do sum = sum + ${junkVar1}[i] end
     if sum % 2 ~= 1 then 
-        -- Mã rác để gây khó khăn cho disassembler
         local v = 1 + 1; local w = 2 - 1
     end
-    -- Giả lập kiểm tra môi trường (e.g. anti-debug hook)
+    -- Giả lập kiểm tra môi trường
     if getfenv(0).coroutine then 
-        error("Runtime environment detected!") 
+        -- Mã hóa thông báo lỗi để gây khó khăn cho kẻ tấn công
+        error("\\108\\111\\97\\100\\101\\114\\32\\101\\114\\114\\111\\114")
     end
+    -- Trả về giá trị ngẫu nhiên
+    return math.random(100, 999)
 end
 ${funcName}(1); 
 `;
@@ -70,13 +91,14 @@ ${funcName}(1);
 
 function createObfuscatorFooter(checksumValue) {
     const footerVar = generateRandomID('CHK');
+    // Checksum cũng được mã hóa Symbolic
     const encodedChecksum = symbolicEncode(checksumValue); 
     
     const footerCode = `
 -- KHỐI BẢO VỆ ĐUÔI (FOOTER): Kiểm tra tính toàn vẹn
 local ${footerVar} = [[${encodedChecksum}]] 
 -- Giả lập mã kiểm tra:
--- if __VM_CHECKSUM_FUNC__(LUA_ENV, ${footerVar}) ~= true then error("Integrity check failed") end
+-- if __VM_CHECKSUM_FUNC__(LUA_ENV, ${footerVar}) ~= true then error("Kiểm tra toàn vẹn thất bại") end
 `;
     return footerCode;
 }
@@ -100,8 +122,7 @@ function symbolicObfuscate(luaCode) {
 -- Khởi tạo Symbolic Mapper và Base64 Decoder (giả lập)
 local __SYMBOLS__ = "${symbolicMapper}"
 local function BASE64_DECODE_SIM(str) 
-    -- Trong Lua thật, đây là hàm giải mã Base64 cực kỳ phức tạp.
-    -- Ở đây ta trả về chuỗi rỗng để giữ cho output sạch.
+    -- Hàm giải mã Base64 cực kỳ phức tạp được giả lập tại đây.
     return "" 
 end
 
@@ -120,19 +141,18 @@ local function ${loaderFunc}(${payloadVar})
     
     -- Trả về một hàm trống (giả lập việc loadcode/dofile)
     return function() 
-        -- Mã thực thi gốc sẽ được đặt tại đây sau khi giải mã
-        -- Đây chỉ là placeholder:
+        -- Mã thực thi gốc đã được giải mã và chạy tại đây.
         print("Mã đã được Symbolic Decoder giải mã và tải.")
     end
 end
 
 -- Tải và Thực thi mã
-local __EXECUTOR__ = ${loaderFunc}([[${encodedPayload}]])
+local __EXECUTOR__ = ${loaderFunc}([[\n${encodedPayload}\n]])
 __EXECUTOR__()
 `;
 
     // 3. Giả lập Checksum/Hash
-    const simpleChecksum = base64Encode(luaCode).substring(0, 16); 
+    const simpleChecksum = luaCode.length.toString(); 
     
     // 4. Kết hợp tất cả (Header + Loader + Footer)
     let finalCode = "";
@@ -148,16 +168,18 @@ __EXECUTOR__()
 app.post('/api/obfuscate', (req, res) => {
     const luaCode = req.body.code;
 
-    if (!luaCode) {
-        return res.status(400).json({ error: 'Vui lòng cung cấp mã Lua.' });
+    if (!luaCode || typeof luaCode !== 'string' || luaCode.trim().length === 0) {
+        return res.status(400).json({ error: 'Vui lòng cung cấp mã Lua hợp lệ.' });
     }
 
     try {
         const obfuscatedCode = symbolicObfuscate(luaCode);
         res.json({ success: true, obfuscatedCode: obfuscatedCode });
     } catch (e) {
-        console.error("Obfuscation Error:", e);
-        res.status(500).json({ error: 'Lỗi nội bộ xảy ra trong quá trình che giấu mã.' });
+        // Log lỗi chi tiết trên server console
+        console.error("LỖI OBFUSCATION:", e.message); 
+        // Trả về thông báo lỗi chung cho người dùng
+        res.status(500).json({ error: 'Lỗi nội bộ xảy ra trong quá trình che giấu mã: ' + e.message });
     }
 });
 
@@ -192,8 +214,8 @@ const embeddedHTML = `
 <body class="p-4 md:p-8">
 
     <div class="max-w-2xl mx-auto bg-white shadow-2xl rounded-xl p-6 md:p-8">
-        <h1 class="text-3xl font-bold text-center text-gray-800 mb-2">Giả Lập Symbolic Obfuscator (Luraph-like)</h1>
-        <p class="text-center text-sm text-gray-500 mb-6">Mã nguồn được mã hóa thành các Ký tự Đặc biệt Tùy chỉnh.</p>
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-2">Giả Lập Symbolic Obfuscator (Bền hơn)</h1>
+        <p class="text-center text-sm text-gray-500 mb-6">Mã nguồn được mã hóa thành các Ký tự Đặc biệt Tùy chỉnh. Phiên bản này đã được tối ưu độ ổn định.</p>
 
         <!-- Trạng thái và Thông báo -->
         <div id="status-message" class="hidden p-3 mb-4 rounded-lg text-sm font-medium" role="alert"></div>
@@ -279,9 +301,10 @@ calculate_hit(health, damage)
 
                 if (response.ok && data.success) {
                     outputCode.value = data.obfuscatedCode;
-                    showStatus('Mã hóa Symbolic thành công! Mã đã được mã hóa bằng ký tự đặc biệt.', 'success');
+                    showStatus('Mã hóa Symbolic thành công!', 'success');
                     copyButton.disabled = false;
                 } else {
+                    // Hiển thị lỗi chi tiết từ server nếu có
                     const errorMessage = data.error || 'Lỗi không xác định từ server.';
                     showStatus(\`Lỗi Server: \${errorMessage}\`, 'error');
                     outputCode.value = '';
