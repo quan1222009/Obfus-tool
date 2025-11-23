@@ -36,7 +36,7 @@ const LUA_GLOBALS = new Set([
 
 /**
  * Mã hóa XOR một chuỗi văn bản và trả về chuỗi Base64
- * SỬA LỖI CÚ PHÁP: Chỉ sử dụng Buffer của Node.js cho Base64.
+ * Sử dụng Buffer của Node.js cho Base64.
  * @param {string} text Chuỗi cần mã hóa.
  * @param {string} key Khóa XOR.
  * @returns {string} Chuỗi đã mã hóa (Base64).
@@ -54,7 +54,7 @@ const xorEncrypt = (text, key) => {
         encryptedBytes[i] = textBytes[i] ^ keyBytes[i % keyBytes.length];
     }
     
-    // SỬA LỖI: Chỉ sử dụng Buffer của Node.js để mã hóa Base64 an toàn
+    // Sử dụng Buffer của Node.js để mã hóa Base64 an toàn
     const base64Encoded = Buffer.from(encryptedBytes).toString('base64');
     return base64Encoded;
 };
@@ -112,7 +112,7 @@ function traverseAndTransform(node) {
 }
 
 // =========================================================================
-//                          DECRYPTOR HEADER LUA (ĐÃ FIX Luau)
+//                          DECRYPTOR HEADER LUA (FIXED)
 // =========================================================================
 
 /**
@@ -120,8 +120,8 @@ function traverseAndTransform(node) {
  */
 const LUA_DECRYPTOR_HEADER = `
 --[[ 
-    DECRYPTOR HEADER - Lõi Giải Mã Chuỗi (Đã fix Luau bitwise)
-    Tương thích với môi trường Roblox/Luau hiện tại.
+    DECRYPTOR HEADER - Lõi Giải Mã Chuỗi
+    Sử dụng toán tử XOR (~) của Luau, tương thích với môi trường Roblox hiện tại.
 ]]
 local function _D(e_b64, k) -- _D là hàm Giải Mã (Decrypt)
     -- Lấy dữ liệu nhị phân đã mã hóa
@@ -164,23 +164,20 @@ app.post('/obfuscate', (req, res) => {
 
     try {
         // --- 1. PHÂN TÍCH VÀ BIẾN ĐỔI (AST) ---
-        // Phân tích code Lua
         const ast = luaparseLib.parse(luaCode, { 
              comments: false, 
              locations: true 
         });
 
-        // Áp dụng biến đổi (Đổi tên) - CHỈ GỌI MỘT LẦN
-        traverseAndTransform(ast);
+        // Áp dụng biến đổi (Đổi tên)
+        traverseAndTransform(ast); 
         
         // --- 2. TÁI TẠO CODE MỚI ---
         
-        // 2a. Mã hóa Chuỗi (Dựa vào String Replacement với vị trí AST)
+        // 2a. Mã hóa Chuỗi
         let obfuscatedWithStrings = luaCode; 
         
-        // Thu thập các StringLiteral (luaparse cần locations: true)
         const stringsToEncrypt = [];
-        // PHẢI PHÂN TÍCH LẠI để thu thập các vị trí của chuỗi
         luaparseLib.parse(luaCode, { comments: false, locations: true }, function (node) {
             if (node.type === 'StringLiteral' && node.loc) {
                 stringsToEncrypt.push({
@@ -210,9 +207,8 @@ app.post('/obfuscate', (req, res) => {
         finalCode = parts.join('');
 
 
-        // 2b. Áp dụng Đổi tên Biến (trên code đã mã hóa chuỗi)
+        // 2b. Áp dụng Đổi tên Biến
         identifierMap.forEach((newName, oldName) => {
-            // Sử dụng RegExp để thay thế toàn bộ tên biến (trên code đã dán header và mã hóa chuỗi)
             const regex = new RegExp('\\b' + oldName + '\\b', 'g');
             finalCode = finalCode.replace(regex, newName);
         });
@@ -222,7 +218,7 @@ app.post('/obfuscate', (req, res) => {
 
         res.json({
             success: true,
-            obfuscator_type: "Luraph-Style: String Encryption (FINAL FIX) + Renaming",
+            obfuscator_type: "Luraph-Style: String Encryption (Cleaned) + Renaming",
             original_length: luaCode.length,
             obfuscated_code: finalObfuscatedCode,
             encryption_key: ENCRYPTION_KEY,
