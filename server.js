@@ -445,7 +445,7 @@ const CLIENT_UI_HTML = `
 
     <div id="app" class="max-w-4xl mx-auto">
         <h1 class="text-3xl font-bold text-red-400 mb-6 text-center">Menu: Lua Obfuscator Nâng Cao (Direction 5 - Anti-Hooking)</h1>
-        <p class="text-gray-400 mb-8 text-center">Đã thêm cơ chế **Anti-Hooking** đơn giản: Nếu hàm `load` đã cache bị thay thế, hệ thống sẽ kích hoạt **Time/Memory Sink Attack** và crash, thay vì giải mã code thật.</p>
+        <p class="text-gray-400 mb-8 text-center">Đã thêm cơ chế **Anti-Hooking** đơn giản: Nếu hàm \`load\` đã cache bị thay thế, hệ thống sẽ kích hoạt **Time/Memory Sink Attack** và crash, thay vì giải mã code thật.</p>
 
         <!-- Container cho Input và Output -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
