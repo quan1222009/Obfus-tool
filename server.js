@@ -4,6 +4,9 @@ const app = express();
 const cors = require('cors');
 const PORT = process.env.PORT || 3000; 
 
+// Thư viện cần thiết cho Base64 encoding
+const Buffer = require('buffer').Buffer;
+
 app.use(express.json({ limit: '5mb' }));
 app.use(cors()); 
 
@@ -19,21 +22,108 @@ const randName = (prefix = 'V') => `${prefix}_${Math.random().toString(36).subst
 const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 const encodeString = (str) => Array.from(str).map(c => c.charCodeAt(0)).join(',');
 
-// Tạo mã rác (minified)
-const generateGarbageModule = (count = 15) => {
-    let garbage = [];
+/**
+ * GENERATE MISLEADING JUNK FUNCTIONS
+ * Tạo ra các hàm cục bộ có tên gợi ý nhưng chỉ chứa logic rác phức tạp.
+ */
+const generateMisleadingFunctions = (count = 4) => {
+    let junk = [];
+    const deceptiveNames = ['LoadModule', 'ProcessData', 'VerifyChecksum', 'CalculateHash', 'DecryptResource', 'ExecuteTask'];
+    
     for (let i = 0; i < count; i++) {
-        const funcName = randName('GM');
+        const funcName = deceptiveNames[i % deceptiveNames.length] + randName('Fn');
         const varA = randName('A');
         const varB = randName('B');
-        const moduleCode = `local function ${funcName}(${varA}, ${varB})local ${randName('C')}=0 for i=1,${randomInt(5, 15)} do ${randName('C')}=${randName('C')}+(${varA}*i)/(${varB} or 1)end if ${randName('C')}>${randomInt(50, 150)} then return ${randName('C')}*2 else return ${randName('C')}/2 end end local ${randName('INIT')}=${funcName}(${randomInt(10, 99)}, ${randomInt(1, 10)})`;
-        garbage.push(moduleCode);
+        const varC = randName('C');
+        const randLoop = randomInt(5, 10);
+        
+        // Logic rác phức tạp
+        const funcCode = `
+            local function ${funcName}(${varA}, ${varB})
+                local ${varC} = 0
+                for i=1, ${randLoop} do
+                    ${varC} = ${varC} + (${varA} * i) / (${varB} or 1)
+                    if ${varC} > 100 then ${varC} = ${varC} / 2 end
+                end
+                if ${varA} > ${randomInt(50, 150)} and ${varB} < ${randomInt(10, 30)} then 
+                    return "ERROR: CODE MISMATCH" 
+                else 
+                    return ${varC} + ${randomInt(1, 5)} 
+                end
+            end
+            local ${randName('INIT')} = ${funcName}(${randomInt(10, 99)}, ${randomInt(1, 10)})
+        `;
+        junk.push(funcCode);
     }
-    return garbage.join('');
+    return junk.join('');
 };
 
 /**
- * Xử lý Payload Gốc (Name Mangling, Hex, XOR)
+ * GENERATE MASSIVE JUNK TABLE (MEMORY ATTACK)
+ * Tạo ra một bảng Lua khổng lồ (vài ngàn mục) đầy các giá trị rác.
+ */
+const generateMassiveJunkTable = (size = 3000) => {
+    const T = randName('MassiveT');
+    let entries = [];
+    for (let i = 1; i <= size; i++) {
+        // Mỗi entry là một phép tính phức tạp để tăng độ khó phân tích
+        const v = randomInt(1000, 9999);
+        const f1 = randomInt(2, 5);
+        const f2 = randomInt(6, 10);
+        entries.push(`${i} = math.floor((${v} * ${f1}) / ${f2})`);
+    }
+    return `local ${T} = {${entries.join(',')}}`;
+};
+
+/**
+ * GENERATE TIME SINK LOOP (DYNAMIC ATTACK)
+ * Tạo vòng lặp tính toán cực lớn để lãng phí thời gian giả lập.
+ */
+const generateTimeSinkLoop = (iterations = 5000000) => {
+    const i = randName('TSi');
+    const v = randName('TSv');
+    const c = randName('TSC');
+    const funcName = randName('TimeKiller');
+
+    // Mẫu vòng lặp: for i=1, 5000000 do v = (v * 1.0001) + 1 end
+    return `
+        local ${v} = ${randomInt(100, 200)}.0
+        local ${c} = 1.0000001
+        local function ${funcName}()
+            for ${i}=1, ${iterations} do 
+                ${v} = (${v} * ${c}) + (${randomInt(1, 10)} / 7.0) 
+            end
+            return ${v}
+        end
+        local ${randName('RES')} = ${funcName}()
+    `;
+};
+
+/**
+ * GENERATE DEEP RECURSION JUNK (EMULATOR CRASH/TIME SINK)
+ * Tạo hàm đệ quy sâu 300 lần.
+ */
+const generateDeepRecursion = (depth = 300) => {
+    const funcName = randName('DeepRec');
+    const depthVar = randName('D');
+    const limit = randName('L');
+    
+    return `
+        local ${limit} = ${depth}
+        local function ${funcName}(${depthVar})
+            if ${depthVar} < ${limit} then
+                ${funcName}(${depthVar} + 1)
+            end
+            local ${randName('J')} = ${depthVar} * 2
+            return ${randName('J')}
+        end
+        local ${randName('RecInit')} = ${funcName}(1)
+    `;
+};
+
+
+/**
+ * Xử lý Payload Gốc (Name Mangling, Hex, XOR, sau đó Base64)
  */
 const processPayload = (lua_code) => {
     let code = lua_code;
@@ -65,30 +155,34 @@ const processPayload = (lua_code) => {
         xor_payload += charCode.toString(16).padStart(2, '0');
     }
     
-    return { payload: xor_payload, key: xorKey };
+    // 4. Mã hóa Base64 cho XOR Payload
+    const base64_payload = Buffer.from(xor_payload).toString('base64');
+
+    return { payload: base64_payload, xorKey: xorKey };
 };
 
-// --- LAYER 1: Loader cực kỳ rút gọn (Dùng Lookup Table ẩn) ---
+// --- LAYER 1: Loader với Base64 Decode & Logic phức tạp ---
 
-const generateLayer1Loader = (xor_data, garbage_code) => {
+const generateLayer1Loader = (xor_data) => {
     
     // Tên biến ngẫu nhiên tối thiểu
     const P = randName('P');
     const K = randName('X');
     const DS = randName('D'); 
-    const XD = randName('F'); 
-    const LT = randName('T'); 
-    const PD = randName('C'); 
-    const R = randName('E'); 
+    const F = randName('F'); // Tên hàm chính: Base64 -> XOR -> Hex Decode
+    const T = randName('T'); // Bảng Lookup Core Functions
     
     // Mã hóa các chuỗi quan trọng thành số học
     const encodedStrings = {
         'load': encodeString('load'), 'string': encodeString('string'), 'char': encodeString('char'), 
         'gsub': encodeString('gsub'), 'tonumber': encodeString('tonumber'), 'table': encodeString('table'),
-        'concat': encodeString('concat'), '_G': encodeString('_G')
+        'concat': encodeString('concat'), '_G': encodeString('_G'), 'byte': encodeString('byte'), 'sub': encodeString('sub'),
+        'function': encodeString('function'),
     };
+    
+    const load_key = `${DS}({${encodedStrings.load}})`
 
-    // 1. String Decoder - Rút gọn tối đa
+    // 1. String Decoder (Minimal)
     const stringDecoderCode = `
         local ${DS}
         ${DS}=function(arr)
@@ -103,34 +197,63 @@ const generateLayer1Loader = (xor_data, garbage_code) => {
         end
     `.trim();
     
-    // 2. Core Lookup Setup - Rút gọn tối đa
+    // 2. Core Lookup Setup (Minimal)
     const coreLookupSetup = `
-        local ${LT}={}
+        local ${T}={}
         local g_ref=getfenv()or _G
-        ${LT}[${DS}({${encodedStrings.load}})]=g_ref[${DS}({${encodedStrings.load}})]
-        ${LT}[${DS}({${encodedStrings.tonumber}})]=g_ref[${DS}({${encodedStrings.tonumber}})]
-        ${LT}[${DS}({${encodedStrings.string}})]=g_ref[${DS}({${encodedStrings.string}})]
-        local s_ref=${LT}[${DS}({${encodedStrings.string}})]
-        ${LT}[${DS}({${encodedStrings.char}})]=s_ref[${DS}({${encodedStrings.char}})]
-        ${LT}[${DS}({${encodedStrings.gsub}})]=s_ref[${DS}({${encodedStrings.gsub}})]
+        -- Cache hàm load vào local table T
+        ${T}[${load_key}]=g_ref[${load_key}]
+        
+        ${T}[${DS}({${encodedStrings.tonumber}})]=g_ref[${DS}({${encodedStrings.tonumber}})]
+        ${T}[${DS}({${encodedStrings.string}})]=g_ref[${DS}({${encodedStrings.string}})]
+        local s_ref=${T}[${DS}({${encodedStrings.string}})]
+        ${T}[${DS}({${encodedStrings.char}})]=s_ref[${DS}({${encodedStrings.char}})]
+        ${T}[${DS}({${encodedStrings.gsub}})]=s_ref[${DS}({${encodedStrings.gsub}})]
+        ${T}[${DS}({${encodedStrings.byte}})]=s_ref[${DS}({${encodedStrings.byte}})]
+        ${T}[${DS}({${encodedStrings.sub}})]=s_ref[${DS}({${encodedStrings.sub}})]
     `.trim();
 
-    // 3. XOR and Hex Decoder - Rút gọn tối đa
-    const xorHexDecodeCode = `
-        local ${XD}
-        ${XD}=function(${P}, ${K})
-            local rh=''
-            local lc=${LT}[${DS}({${encodedStrings.char}})]
-            local ln=${LT}[${DS}({${encodedStrings.tonumber}})]
+    // 3. BASE64 + XOR + HEX DECODER (Logic Phức tạp hơn)
+    const base64Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    const base64DecodeCode = `
+        local ${F}
+        ${F}=function(${P}, ${K})
+            local lc=${T}[${DS}({${encodedStrings.char}})]
+            local ln=${T}[${DS}({${encodedStrings.tonumber}})]
+            local lby=${T}[${DS}({${encodedStrings.byte}})]
+            local ls=${T}[${DS}({${encodedStrings.sub}})]
+
+            -- Base64 Decode
+            local b64_map = '${base64Chars}'
+            local b64_idx = {}
+            for i=1, #b64_map do b64_idx[ls(b64_map, i, i)] = i-1 end
+            
+            local b64_dec = ''
             local i=1
-            while i<=#${P} do
-                local bh=${P}:sub(i,i+1)
-                local cc=ln(bh,16)
+            while i <= #${P} do
+                local c1, c2, c3, c4 = b64_idx[ls(${P}, i, i)], b64_idx[ls(${P}, i+1, i+1)], b64_idx[ls(${P}, i+2, i+2)], b64_idx[ls(${P}, i+3, i+3)]
+                
+                local v1 = (c1*4) + math.floor(c2/16)
+                local v2 = ((c2%16)*16) + math.floor(c3/4)
+                local v3 = ((c3%4)*64) + c4
+                
+                b64_dec = b64_dec .. lc(v1) .. (c3~=64 and lc(v2) or '') .. (c4~=64 and lc(v3) or '')
+                i=i+4
+            end
+
+            -- XOR + HEX Decode (Áp dụng cho b64_dec)
+            local rh=''
+            local i=1
+            while i<=#b64_dec do
+                local byte_hex=ls(b64_dec, i, i+1)
+                local cc=ln(byte_hex,16)
                 local oc=cc~${K} 
                 rh=rh..lc(oc)
                 i=i+2
             end
-            local lg=${LT}[${DS}({${encodedStrings.gsub}})]
+            
+            -- Final Hex String Decode
+            local lg=${T}[${DS}({${encodedStrings.gsub}})]
             local d=lg(rh,'..',function(h)
                 local i=ln(h,16)
                 return lc(i)
@@ -139,23 +262,36 @@ const generateLayer1Loader = (xor_data, garbage_code) => {
         end
     `.trim();
     
-    // 4. Execution Block - Rút gọn tối đa
+    // 4. Execution Block (Tiêm mã rác)
     const payloadDefinition = `local ${P}="${xor_data.payload}"`;
-    const keyDefinition = `local ${K}=${xor_data.key}`; 
-    const predicateCalculation = `local ${PD}=(${K}*${randomInt(10, 50)})%${K}==0`; 
+    const keyDefinition = `local ${K}=${xor_data.xorKey}`; 
+    
+    // Biến kiểm tra type của hàm load đã cache. Nếu bị hook (thay thế) có thể không còn là 'function'
+    const loadFunctionTypeCheck = `type(${T}[${load_key}]) ~= ${DS}({${encodedStrings.function}})`
+    
     const executionBlock = `
-        ${predicateCalculation}
-        if ${PD} and getfenv()~=nil then 
-            local l=${LT}[${DS}({${encodedStrings.load}})]
-            local dc=${XD}(${P},${K})
-            local ${R}=l(dc)
-            if type(${R})==${DS}({102,117,110,99,116,105,111,110}) then 
-                ${R}()
+        local l=${T}[${load_key}]
+        
+        -- BẮT ĐẦU ANTI-HOOK CHECK
+        if ${loadFunctionTypeCheck} then
+            -- PHÁT HIỆN HOOK HOẶC THAO TÚNG HÀM CƠ BẢN: Kích hoạt tấn công thời gian/bộ nhớ
+            
+            ${generateMassiveJunkTable(3000)}
+            ${generateDeepRecursion(300)}
+            ${generateTimeSinkLoop(5000000)}
+            
+            local ${randName('Trap')} = 1/0 -- Gây lỗi chia cho 0 hoặc Crash
+        else 
+            -- KHÔNG PHÁT HIỆN HOOK: Thực thi Payload thật
+            
+            local dc=${F}(${P},${K})
+            
+            local ${randName('E')}=l(dc)
+            if type(${randName('E')})==${DS}({${encodedStrings.function}}) then 
+                ${randName('E')}()
             else
                 local e=1/0
             end
-        else
-            local fe=fe or nil
         end
     `.trim();
 
@@ -164,13 +300,13 @@ const generateLayer1Loader = (xor_data, garbage_code) => {
         stringDecoderCode, 
         coreLookupSetup,
         keyDefinition,
-        xorHexDecodeCode,
+        base64DecodeCode,
+        generateMisleadingFunctions(4), 
         payloadDefinition,
         executionBlock
     ].join(''); 
 
-    // Thêm mã rác sau khối lõi để tăng độ dài và làm nhiễu
-    let finalL1Code = `${coreBlocks}${garbage_code}`;
+    let finalL1Code = coreBlocks;
 
     // Loại bỏ tất cả khoảng trắng, dấu ngắt dòng thừa
     finalL1Code = finalL1Code
@@ -181,14 +317,23 @@ const generateLayer1Loader = (xor_data, garbage_code) => {
     return finalL1Code;
 };
 
-// --- LAYER 2: Stub (Self-Executing Closure) - Ẩn Core bằng ASCII Lookup Tối Đa ---
+// --- LAYER 2: Stub (Arithmetic Key Obfuscation) ---
 
 const generateLayer2Stub = (layer1Code) => {
     // 1. Mã hóa Layer 1 code (Hex + XOR lần 2)
-    const L2_key = randomInt(1, 255);
+    const L2_key_raw = randomInt(1, 255);
+    
+    // Tạo Phép Toán Số học ẩn Key
+    const factor1 = randomInt(5, 10);
+    const offset1 = randomInt(10, 50);
+    
+    const L2_key_obf_value = (L2_key_raw * factor1) + offset1;
+    const L2_key_obf_formula = `((${L2_key_obf_value} - ${offset1}) / ${factor1})`;
+
+
     let L2_hex_payload = '';
     for (let i = 0; i < layer1Code.length; i++) {
-        const charCode = layer1Code.charCodeAt(i) ^ L2_key;
+        const charCode = layer1Code.charCodeAt(i) ^ L2_key_raw;
         L2_hex_payload += charCode.toString(16).padStart(2, '0');
     }
     
@@ -197,7 +342,7 @@ const generateLayer2Stub = (layer1Code) => {
     const K = randName('K'); 
     const D = randName('D'); 
     
-    // ASCII codes cho các hàm core cần thiết (load, tonumber, string, char, sub)
+    // ASCII codes cho các hàm core
     const generateAsciiLookup = (name) => {
         const charCodes = Array.from(name).map(c => c.charCodeAt(0));
         return charCodes.map(code => `G.string.char(${code})`).join('..');
@@ -212,7 +357,9 @@ const generateLayer2Stub = (layer1Code) => {
     const finalL2Stub = `
         (function()
             local ${P}="${L2_hex_payload}"
-            local ${K}=${L2_key}
+            
+            -- Key được ẩn bằng phép tính số học (Arithmetic Obfuscation)
+            local ${K}=${L2_key_obf_formula}
 
             local ${D}
             ${D}=function(p, k)
@@ -255,14 +402,13 @@ app.post('/obfuscate', (req, res) => {
     }
 
     try {
-        // --- 1. LAYER 1: Mã hóa Payload Gốc
+        // --- 1. LAYER 1: Mã hóa Payload Gốc (Base64/XOR/Hex)
         const xorDataL1 = processPayload(lua_code);
-        const garbageCodeL1 = generateGarbageModule(15);
         
-        // --- 2. TẠO LOADER LAYER 1 (Cực kỳ rút gọn)
-        const layer1Code = generateLayer1Loader(xorDataL1, garbageCodeL1);
+        // --- 2. TẠO LOADER LAYER 1 (Thêm các mã tấn công)
+        const layer1Code = generateLayer1Loader(xorDataL1);
 
-        // --- 3. LAYER 2: Stub cuối cùng (Ẩn Core bằng ASCII Lookup)
+        // --- 3. LAYER 2: Stub cuối cùng (Thêm Key Arithmetic Obfuscation)
         const finalObfuscatedCode = generateLayer2Stub(layer1Code);
         
         res.json({ 
@@ -298,8 +444,8 @@ const CLIENT_UI_HTML = `
 <body class="p-4 md:p-8">
 
     <div id="app" class="max-w-4xl mx-auto">
-        <h1 class="text-3xl font-bold text-red-400 mb-6 text-center">Menu: Lua Obfuscator Chống Phát Hiện Mức Tối Đa (Extreme)</h1>
-        <p class="text-gray-400 mb-8 text-center">Đã loại bỏ tất cả chú thích và nén thành 1 khối để đạt độ che giấu cao nhất.</p>
+        <h1 class="text-3xl font-bold text-red-400 mb-6 text-center">Menu: Lua Obfuscator Nâng Cao (Direction 5 - Anti-Hooking)</h1>
+        <p class="text-gray-400 mb-8 text-center">Đã thêm cơ chế **Anti-Hooking** đơn giản: Nếu hàm `load` đã cache bị thay thế, hệ thống sẽ kích hoạt **Time/Memory Sink Attack** và crash, thay vì giải mã code thật.</p>
 
         <!-- Container cho Input và Output -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -376,7 +522,7 @@ const CLIENT_UI_HTML = `
 
                 if (response.ok) {
                     outputArea.value = result.obfuscated_code;
-                    statusInfo.textContent = \`Kích thước cuối: \${Math.round(result.final_size / 1024)} KB\`;
+                    statusInfo.textContent = \`Kích thước cuối: \${(result.final_size / 1024).toFixed(2)} KB\`;
                     showMessage("Obfuscation thành công!", false);
                 } else {
                     outputArea.value = \`LỖI API (\${response.status}): \${result.error || 'Lỗi không xác định.'}\`;
@@ -411,7 +557,7 @@ const CLIENT_UI_HTML = `
         };
 
         window.onload = () => {
-            document.getElementById('input-code').value = \`-- Mã này sẽ được xử lý qua 2 lớp mã hóa\nlocal health = 100\nfunction update_status(damage)\n    health = health - damage\n    if health <= 0 then\n        print("Game Over")\n    end\n    return health\nend\n\nupdate_status(20)\`;
+            document.getElementById('input-code').value = \`-- Mã này đã được nâng cấp lên 3 lớp mã hóa (Base64/XOR/Hex)\nlocal total_score = 0\nfunction add_point(value)\n    total_score = total_score + value\n    if total_score > 1000 then\n        print("Mission Complete!")\n    end\nend\n\nadd_point(500)\`;
         }
 
     </script>
