@@ -110,7 +110,7 @@ const generateLayer1Loader = (xor_data, garbage_code) => {
     const payloadVar = randName('P');
     const xorKeyVar = randName('X');
     const decodeStringFunc = randName('DS'); // String Decoder
-    const xorHexDecodeFunc = randName('XD'); // Hex/XOR Decoder
+    const xorHexDecodeName = randName('XD'); // Tên hàm Lua
     const lookupTable = randName('LT'); // Bảng Lookup Core Functions
     const predicateVar = randName('PD'); // Biến cho Control Flow
     const runFunc = randName('R');
@@ -158,9 +158,10 @@ const generateLayer1Loader = (xor_data, garbage_code) => {
     `.trim();
 
     // 4. Hàm giải mã XOR và Hex
-    const xorHexDecodeFunc = `
-        local ${xorHexDecodeFunc}
-        ${xorHexDecodeFunc} = function(${payloadVar}, ${xorKeyVar})
+    // FIX: Đã đổi tên biến JS để không trùng với tên hàm Lua (xorHexDecodeName)
+    const xorHexDecodeCode = `
+        local ${xorHexDecodeName}
+        ${xorHexDecodeName} = function(${payloadVar}, ${xorKeyVar})
             local raw_hex = ''
             
             -- Lấy các hàm qua Lookup Table
@@ -198,7 +199,7 @@ const generateLayer1Loader = (xor_data, garbage_code) => {
         if ${predicateVar} and ${randName('G')} ~= nil then 
             local ${randName('LOAD')} = ${lookupTable}[${decodeStringFunc}({${encodedStrings.load}})]
             
-            local ${randName('DECRYPTED_CODE')} = ${xorHexDecodeFunc}(${payloadVar}, ${xorKeyVar})
+            local ${randName('DECRYPTED_CODE')} = ${xorHexDecodeName}(${payloadVar}, ${xorKeyVar})
             local ${runFunc} = ${randName('LOAD')}(${randName('DECRYPTED_CODE')})
             
             if type(${runFunc}) == 'function' then 
@@ -220,7 +221,7 @@ const generateLayer1Loader = (xor_data, garbage_code) => {
     structuredBlocks.push(coreLookupSetup);
     structuredBlocks.push(keyDefinition);
     structuredBlocks.push(...garbageBlocks.slice(0, 4)); 
-    structuredBlocks.push(xorHexDecodeFunc); 
+    structuredBlocks.push(xorHexDecodeCode); 
     structuredBlocks.push(payloadDefinition);
     structuredBlocks.push(...garbageBlocks.slice(4, 8)); 
     structuredBlocks.push(executionBlock);
@@ -273,10 +274,10 @@ const generateLayer2Stub = (layer1Code) => {
                 -- Phải dùng getfenv() và _G để lấy các hàm cơ bản nhất
                 local ${randName('G')} = getfenv() or _G 
                 
-                -- Tạo hàm string.char và tonumber bằng Arithmetic String Retrieval TỐI GIẢN
-                -- Chỉ dùng 2 hàm này để giải mã TÊN CỦA CÁC HÀM CÒN LẠI
+                -- Tạo hàm tonumber, string.char, string.sub bằng Arithmetic String Retrieval TỐI GIẢN
+                -- Chỉ dùng 3 hàm này để giải mã TÊN CỦA CÁC HÀM CÒN LẠI
                 
-                -- Reconstruct "tonumber" (chỉ sử dụng mã ASCII đã mã hóa)
+                -- Lấy tonumber (dùng string.char đã có sẵn trong _G/getfenv)
                 local ${randName('N')} = ${randName('G')}[${randName('G')}.string.char(116)..${randName('G')}.string.char(111)..${randName('G')}.string.char(110)..${randName('G')}.string.char(117)..${randName('G')}.string.char(109)..${randName('G')}.string.char(98)..${randName('G')}.string.char(101)..${randName('G')}.string.char(114)] 
                 
                 local ${randName('S_T')} = ${randName('G')}[${randName('G')}.string.char(115)..${randName('G')}.string.char(116)..${randName('G')}.string.char(114)..${randName('G')}.string.char(105)..${randName('G')}.string.char(110)..${randName('G')}.string.char(103)]
@@ -294,12 +295,12 @@ const generateLayer2Stub = (layer1Code) => {
                 end
                 
                 -- Phân tách tên hàm (load, tonumber, string, char, sub)
-                local ${randName('LOAD')}, ${randName('TNUM')}, ${randName('STR')}, ${randName('CHAR')}, ${randName('SUB')} = ${randName('NAMES')}:match("(.+)|(.+)|(.+)|(.+)|(.+)")
+                local ${randName('LOAD')}, ${randName('TNUM_NAME')}, ${randName('STR_NAME')}, ${randName('CHAR_NAME')}, ${randName('SUB_NAME')} = ${randName('NAMES')}:match("(.+)|(.+)|(.+)|(.+)|(.+)")
                 
                 -- Hàm giải mã L1 Payload chính
                 for i = 1, #p, 2 do
-                    local c = ${randName('N')}(${randName('SUB')}(p, i, i+1), 16)
-                    s = s .. ${randName('CHAR')}(c ~ k)
+                    local c = ${randName('N')}(${randName('S_B')}(p, i, i+1), 16)
+                    s = s .. ${randName('C_H')}(c ~ k)
                 end
                 
                 -- Thực thi Layer 1
@@ -313,10 +314,7 @@ const generateLayer2Stub = (layer1Code) => {
             ${L2_decodeFunc}(${payloadVar}, ${keyVar}) 
         end)()
     `;
-    // Ghi chú: Tôi đã thay thế phần Arithmetic String Retrieval trong L2 bằng cách gọi trực tiếp string.char (đã được lấy qua _G)
-    // và chỉ dùng nó để Reconstruct 2 hàm string.char và tonumber, rồi dùng chính các hàm này để giải mã toàn bộ tên còn lại.
-    // Điều này làm cho code Layer 2 trông vô cùng rối rắm và khó phân tích.
-
+    
     return finalL2Stub.trim();
 };
 
@@ -367,7 +365,7 @@ const CLIENT_UI_HTML = `
         .card { background-color: #161b22; border: 1px solid #30363d; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2); }
         textarea { background-color: #010409; color: #38bdf8; font-family: 'Consolas', 'Courier New', monospace; resize: none; }
         .btn-primary { transition: all 0.2s; }
-        .btn-primary:hover { box-shadow: 0 0 10px #4ade80; transform: translateY(-1px); }
+        .btn-primary:hover { box-shadow: 0 0 10px #f87171; transform: translateY(-1px); }
     </style>
 </head>
 <body class="p-4 md:p-8">
@@ -495,11 +493,14 @@ const CLIENT_UI_HTML = `
     </script>
 </body>
 </html>
-`;eof
+`;
 
-Với bản cập nhật này, Lớp 2 Stub đã được che giấu đến mức tối đa:
+// Đường dẫn chính hiển thị giao diện người dùng
+app.get('/', (req, res) => {
+    res.send(CLIENT_UI_HTML);
+});
 
-* **Static View:** Mã chỉ là một biểu thức thực thi duy nhất (`(function() ... end)()`) và các biến chứa dữ liệu Hex/XOR.
-* **Hiding Core Functions:** Các hàm như `load` không còn được tạo ra từ danh sách mã ASCII dễ đọc nữa, mà được giải mã từ một chuỗi Hex/XOR ngắn, được ẩn bên trong một hàm.
-
-Đây là cấp độ Obfuscation cực kỳ cao, yêu cầu công cụ Dynamic Analyzer phải thực hiện nhiều bước hơn để tìm ra lệnh `load()` cuối cùng.
+// Khởi động Server
+app.listen(PORT, () => {
+    console.log(`Server Obfuscator đang chạy trên cổng ${PORT}`);
+});
