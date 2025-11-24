@@ -17,8 +17,9 @@ const KEYWORD_MAP = {
     'local ': '___A01___', 'function ': '___B02___', 'end': '___C03___', 'if ': '___D04___', 'then': '___E05___', 'else': '___F06___', 'elseif ': '___G07___', 'do': '___H08___', 'while ': '___I09___', 'return ': '___J10___', '=': '___K11___', '(': '___L12___', ')': '___M13___', '{': '___N14___', '}': '___O15___', '[': '___P16___', ']': '___Q17___', ':': '___R18___', ';': '___S19___', ',': '___T20___', 'and ': '___U21___', 'or ': '___V22___', 'not ': '___W23___', 'in ': '___X24___', 'for ': '___Y25___', '~=': '___Z26___', '--': '___ZZZ___', 'nil': '___NIL___', 'break': '___BRK___', 'repeat': '___RPT___', 'until': '___UTL___', 'false': '___FAS___', 'true': '___TRS___',
 };
 
-// Hàm tiện ích
-const randName = (prefix = 'V') => `${prefix}_${Math.random().toString(36).substring(2, 12)}`;
+// Hàm tiện ích: Tên biến ngẫu nhiên CỰC NGẮN (MAX MINIFICATION)
+// Chiều dài 4 ký tự sau tiền tố (VD: Vabc4)
+const randName = (prefix = 'V') => `${prefix}${Math.random().toString(36).substring(2, 6)}`;
 const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 const encodeString = (str) => Array.from(str).map(c => c.charCodeAt(0)).join(',');
 
@@ -445,7 +446,7 @@ const CLIENT_UI_HTML = `
 
     <div id="app" class="max-w-4xl mx-auto">
         <h1 class="text-3xl font-bold text-red-400 mb-6 text-center">Menu: Lua Obfuscator Nâng Cao (Direction 5 - Anti-Hooking)</h1>
-        <p class="text-gray-400 mb-8 text-center">Đã thêm cơ chế **Anti-Hooking** đơn giản: Nếu hàm \`load\` đã cache bị thay thế, hệ thống sẽ kích hoạt **Time/Memory Sink Attack** và crash, thay vì giải mã code thật.</p>
+        <p class="text-gray-400 mb-8 text-center">Đã thêm cơ chế **Anti-Hooking** đơn giản: Nếu hàm \`load\` đã cache bị thay thế, hệ thống sẽ kích hoạt **Time/Memory Sink Attack** và crash, thay vì giải mã code thật. (Code đầu ra đã được **Siêu Nén**)</p>
 
         <!-- Container cho Input và Output -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
